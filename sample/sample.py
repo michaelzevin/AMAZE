@@ -216,7 +216,6 @@ def lnlike_cont(x, data, pop_models, submodels_dict, channels, prior_pdf, smalle
 
     #find log of alpha_CE for finding likelihood
     model_hyperparams = [x[0],np.log(x[1])]
-    print(x)
 
     # Iterate over channels in this submodel, return likelihood of population model
     for channel, beta in zip(channels, betas):
