@@ -128,14 +128,14 @@ if use_flows==True:
     if verbose:
         print_both(print_file, "\nReading models, applying transformations, and initializing underlying Normalising Flow models...\n")
     model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows, flow_path=args.flow_model_filename,\
-        spin_distr=args.spinmag, sensitivity=args.sensitivity, detectable=False)
+            sensitivity=args.sensitivity, device=args.device, detectable=False)
 else:
     if verbose:
         print_both(print_file, "\nReading models, applying transformations, and initializing underlying KDEs...\n")
-    model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows, spin_distr=args.spinmag,\
-         sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=False, use_unityweights=args.use_unityweights)
-    _, pop_models_detectable = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows, spin_distr=args.spinmag\
-        , sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=True, use_unityweights=args.use_unityweights)
+    model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
+        sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=False, use_unityweights=args.use_unityweights)
+    _, pop_models_detectable = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
+        sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=True, use_unityweights=args.use_unityweights)
 
 #grab model hyperparameters from model input file
 model_names.sort()
@@ -342,7 +342,8 @@ if use_flows==True:
             if use_wandb == True:
                 pop_models[channel].wandb_init(int(args.epochs[i]))
             else:
-                pop_models[channel].train(int(args.no_trans[i]), int(args.spline_bins[i]), int(args.no_neurons[i]), lr[i], int(args.epochs[i]), args.batch_no, args.flow_model_filename, channel, use_wandb)
+                pop_models[channel].train(int(args.no_trans[i]), int(args.spline_bins[i]), int(args.no_neurons[i]), lr[i], \
+                    int(args.epochs[i]), args.batch_no, args.flow_model_filename, use_wandb)
         else:
             pop_models[channel].load_model(args.flow_model_filename, device=args.device)
 else:

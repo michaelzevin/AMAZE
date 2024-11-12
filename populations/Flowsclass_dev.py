@@ -51,7 +51,7 @@ class Model(object):
 
 class FlowModel(Model):
     @staticmethod
-    def from_samples(channel, samples, params, flow_path, sensitivity, device):
+    def from_samples(channel, samples, params, flow_path, sensitivity=None, device='cpu'):
         """
         Generate a Flow model instance from `samples`, where `params` are series in the `samples` dataframe. 
         
@@ -85,7 +85,7 @@ class FlowModel(Model):
         return FlowModel(channel, samples, params, flow_path, sensitivity, device=device)
 
 
-    def __init__(self, channel, samples, params, flow_path, sensitivity=None, device='cpu'):
+    def __init__(self, channel, samples, params, flow_path, sensitivity, device):
         """
         Initialisation for FlowModel object. Sets self.flow as instance of Nflow class, of which FlowModel is wrapper of that object.
 
