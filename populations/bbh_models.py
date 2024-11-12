@@ -7,7 +7,7 @@ from tqdm import tqdm
 from . import *
 from .utils.transform import _DEFAULT_TRANSFORMS, _to_chieff, \
 _uniform_spinmag, _isotropic_spinmag
-from .Flowsclass_dev import FlowModel
+from .Pop_Flows import FlowModel
 
 
 
