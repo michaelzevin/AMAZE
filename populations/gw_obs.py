@@ -152,9 +152,16 @@ def generate_observations(params, gwpath, Nsamps, mesaurement_uncertainty='delta
             if len(df) >= Nsamps:
                 sample_idxs = np.random.choice(np.arange(len(df)), size=Nsamps, replace=False)
             else:
-                sample_idxs = np.random.choice(np.arange(len(df)), size=Nsamps, replace=True)
-
+                #draw all samples Ndraws times plus random without replacement extra
+                Ndraws = 0
+                sample_idxs = np.zeros(Nsamps, dtype=int)
+                while Ndraws*len(df)<Nsamps-len(df):
+                    sample_idxs[Ndraws*len(df):(Ndraws+1)*len(df)] = np.arange(len(df))
+                    Ndraws+=1
+                sample_idxs[Ndraws*len(df):Nsamps] = np.random.choice(np.arange(len(df)), size=Nsamps-(Ndraws*len(df)), replace=False)
+                    
             samples[idx, :, :] = df[params].iloc[sample_idxs]
+
             if prior is not None:
                 p_theta[idx, :] = df[prior].iloc[sample_idxs]
 
