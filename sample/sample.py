@@ -22,8 +22,8 @@ _prior = 'emcee_lnp'
 _likelihood = 'emcee_lnlike'
 _posterior = 'emcee_lnpost'
 
-_nwalkers = 16
-_nsteps = 10000
+_nwalkers = 250
+_nsteps = 1000
 _fburnin = 0.2
 
 _hyperparam_bounds = [[0.,0.5],[0.2,5.]]
