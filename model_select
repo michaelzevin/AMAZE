@@ -21,7 +21,6 @@ import scipy.stats
 
 from populations import bbh_models, gw_obs
 from sample import sample
-from plot import msplot
 
 def print_both(file, *args):
     toprint = ' '.join([str(arg) for arg in args])

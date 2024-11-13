@@ -23,11 +23,4 @@ conditional = np.array(args.conditional)
 
 
 for channel in channel_label:
-    make_pop_corner(channel, hyperparam_idxs, justplot=False, flow_dir=flow_dir, conditional=conditional)
-
-discrete_result_files = glob.glob(f'{discrete_result_path}/*.hdf5')
-try:
-    KDE_result_files = glob.glob(f'{discrete_result_path_KDE}/*.hdf5')
-    make_1D_result_discrete(discrete_result_files, second_files=KDE_result_files, labels = [' flow', ' KDE'], figure_name='DiscreteKDE')
-except FileNotFoundError():
-    make_1D_result_discrete(discrete_result_files, second_files=None, labels = [' flow', None], figure_name='Discrete')
+    make_pop_corner(channel, hyperparam_idxs, justplot=True, flow_dir=flow_dir, conditional=conditional)

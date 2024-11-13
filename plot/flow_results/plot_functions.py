@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from copy import deepcopy
 import corner
+from tqdm import tqdm
 import matplotlib.lines as mlines
 from scipy.stats import dirichlet
 from scipy.stats import loguniform
@@ -18,7 +19,8 @@ from matplotlib import gridspec
 import sys
 sys.path.append('../../')
 from populations.bbh_models import *
-from populations.Flowsclass_dev import FlowModel
+from populations.Pop_Flows import FlowModel
+from sample.sample import lnlike_disc
 
 colors = sns.color_palette("colorblind", n_colors=10)
 cp = [colors[0], colors[2], colors[4], colors[1], colors[3], colors[6], colors[9], colors[5], colors[8]]
@@ -50,13 +52,12 @@ _channel_label =[r'$\beta_{\mathrm{CE}}$',r'$\beta_{\mathrm{CHE}}$',r'$\beta_{\m
 
 _models_path ='/data/wiay/2297403c/models_reduced.hdf5'
 
-pt = 1./72.27 # Hundreds of years of history... 72.27 points to an inch.
-
-jour_sizes = {"AAS": {"onecol": 246.*pt, "twocol": 513.*pt},
+pt = 1./72.27
+jour_sizes = {"AAS": {"onecol": 242.26653*pt, "twocol": 242.26653*2*pt},
               # Add more journals below. Can add more properties to each journal
              }
 
-figure_width = jour_sizes["AAS"]["twocol"]
+figure_width = jour_sizes["AAS"]["onecol"]
 
 
 _base_corner_kwargs = dict(
@@ -74,6 +75,7 @@ _base_corner_kwargs = dict(
 
 def load_result_samps(filenames, discrete_result=False, Nhyper=2, Nchannels=5, detectable=False):
     """
+    Loads hyperposterior samples from like of hdf5 files
     filenames : list, array
     """
     samples_allchains = np.array([])
@@ -96,12 +98,11 @@ def load_result_samps(filenames, discrete_result=False, Nhyper=2, Nchannels=5, d
     return samples_allchains
 
 def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=None):
-    #models_path ='/Users/stormcolloms/Documents/PhD/Project_work/AMAZE_model_selection/testing_notebooks/flow_samples.hdf5'
     
     popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
 
-    weighted_flow = FlowModel(channel_label, popsynth_outputs, _params, flow_path=flow_dir)
-    model_names, KDE_models = get_models(_models_path, [channel_label], _params, use_flows=False, spin_distr=None, normalize=False, detectable=False)
+    weighted_flow = FlowModel(channel_label, popsynth_outputs, _params, flow_path=flow_dir,  device='cpu', sensitivity='midhighlatelow')
+    model_names, KDE_models = get_models(_models_path, [channel_label], _params, use_flows=False, normalize=False, detectable=False)
 
     hyperparams = list(set([x.split('/', 1)[1] for x in model_names]))
     Nhyper = np.max([len(x.split('/')) for x in hyperparams])
@@ -143,6 +144,7 @@ def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=
 
 def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None, conditional=None, plot_KDE=True):
 
+    #get samples from models, either sampling first or loading from file
     if justplot==False:
         sample_pop_corner( flow_dir, channel_label, conditional, KDE_hyperparam_idxs=hyperparam_idxs)
     if type(hyperparam_idxs) == type(None):
@@ -151,6 +153,7 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
         kde_samples = np.load(f"{_basepath}/data/{channel_label}_KDEs_cornersample.npy")
     flow_samples= np.load(f"{_basepath}/data/{channel_label}_flows_cornersample.npy")
 
+    #get training population samples
     popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
     models_dict = dict.fromkeys(popsynth_outputs.keys())
     weights_dict = dict.fromkeys(popsynth_outputs.keys())
@@ -159,6 +162,7 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
         models_dict[key] = popsynth_outputs[key][_params]
         weights_dict[key]= popsynth_outputs[key]['weight']
 
+    #set colours for plot
     colors=['C1', 'purple', 'royalblue']
     labels=['Underlying Model', 'KDE', 'Normalising Flow']
 
@@ -173,8 +177,11 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
     corner_kwargs_flow["hist_kwargs"]["color"] = colors[2]
 
     plt.rcParams['figure.figsize'] = [figure_width, figure_width]
+
+    #plot flow samples without training models or KDEs if off of training model grid
     if type(hyperparam_idxs) == type(None):
         fig=corner.corner(flow_samples, **corner_kwargs_flow)
+    #else plot training models, KDE if plotting, and flow last
     else:
         if channel_label == 'CE':
             fig =corner.corner(models_dict[tuple(hyperparam_idxs)],  weights=weights_dict[tuple(hyperparam_idxs)], **model_kwargs)
@@ -183,6 +190,7 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
         if plot_KDE==True:
             corner.corner(kde_samples, fig=fig, **corner_kwargs_kde)
         corner.corner(flow_samples, fig=fig, **corner_kwargs_flow)
+    #add legend
     plt.legend(
             handles=[
                 mlines.Line2D([], [], color=colors[i], label=labels[i])
@@ -191,6 +199,7 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
             frameon=False,
             bbox_to_anchor=(1, 4), loc="upper right"
         )
+    #save figure
     plt.savefig(f"{_basepath}/pdfs/{channel_label}_flowKDEmodel_corner_chib{hyperparam_idxs[0]}.pdf")
 
 def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], figure_name='Discrete'):
@@ -386,4 +395,107 @@ def save_detectable_betas(filenames, analysis_name):
         
     df = pd.DataFrame(np.hstack([samples_allchains[:,:2],converted_betas]), columns=columns)
     df.to_hdf(f'{_basepath}/data/{analysis_name}_detectable_betas.hdf5', key='model_selection/detectable_samples')
+
+def calc_llh_ratio_CE(flow_dir):
+
+    channel_label = 'CE'
+    popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
+
+    flow = FlowModel(channel_label, popsynth_outputs, _params, flow_path=flow_dir, sensitivity='midhighlatelow', device='cpu')
+    model_names, KDE_models = get_models(_models_path, [channel_label], _params, use_flows=False, normalize=False,\
+         detectable=False, senseitivity='midhighlatelow')
+
+    hyperparams = list(set([x.split('/', 1)[1] for x in model_names]))
+    Nhyper = np.max([len(x.split('/')) for x in hyperparams])
+
+    # construct dict that relates submodels to their index number
+    submodels_dict = {} #dummy index dict keys:0,1,2,3, items: particular models
+    ctr=0 #associates with either chi_b or alpha (0 or 1)
+    while ctr < Nhyper:
+        submodels_dict[ctr] = {}
+        hyper_set = sorted(list(set([x.split('/')[ctr] for x in hyperparams])))
+        for idx, model in enumerate(hyper_set): #idx associates with 0,1,2,3,(4) keys
+            submodels_dict[ctr][idx] = model
+        ctr += 1
+
+    flow.load_model(flow_dir, device='cpu')
+
+    mchirps = np.linspace(4.,49.9,20)
+    qs = np.linspace(0.01,0.99,20)
+
+    p_mchirpq_unreg = np.zeros((20,20))
+    p_mchirpq_kde_unreg = np.zeros((20,20))
+    p_mchirpq_reg = np.zeros((20,20))
+    p_mchirpq_kde_reg = np.zeros((20,20))
+    chi_b_id = 0
+    alpha_id = 4
+
+    for  i, m in enumerate(tqdm(mchirps)):
+        for j, q in enumerate(qs):
+            sample = np.reshape([m, q,0.05,0.2], (1,1,4))
+            p_mchirpq_reg[i, j] = lnlike_disc([chi_b_id,alpha_id], sample, flow, submodels_dict, ['CE'], use_flows=True,\
+                 prior_pdf=None, smallest_N=990903)
+            p_mchirpq_kde_reg[i, j] = lnlike_disc([chi_b_id,alpha_id], sample, KDE_models, submodels_dict, ['CE'], use_flows=False,\
+                 prior_pdf=None, smallest_N=990903)
+            
+            p_mchirpq_unreg[i, j] = lnlike_disc([chi_b_id,alpha_id], sample, flow, submodels_dict, ['CE'], use_flows=True,\
+                 prior_pdf=None, smallest_N=None)
+            p_mchirpq_kde_unreg[i, j] = lnlike_disc([chi_b_id,alpha_id], sample, KDE_models, submodels_dict, ['CE'], use_flows=False,\
+                 prior_pdf=None, smallest_N=None)
+
+    llh_ratio_kde_flow_reg = np.log10(np.exp(p_mchirpq_reg-p_mchirpq_kde_reg))
+    llh_ratio_kde_flow_unreg = np.log10(np.exp(p_mchirpq_unreg-p_mchirpq_kde_unreg))
+
+    #save ratios
+    np.save(f"{_basepath}/data/llh_ratio_kde_flow_reg.npy", llh_ratio_kde_flow_reg)
+    np.save(f"{_basepath}/data/llh_ratio_kde_flow_unreg.npy", llh_ratio_kde_flow_unreg)
+
+    return mchirps, qs, llh_ratio_kde_flow_reg, llh_ratio_kde_flow_unreg
+
+def plot_llh_ratio_CE(flow_dir):
+    plt.rcParams['figure.figsize'] = [figure_width/2, figure_width/2]
+    
+    mchirps, qs, llh_ratio_kde_flow_reg, llh_ratio_kde_flow_unreg = calc_llh_ratio_CE(flow_dir)
+
+    popsynth_outputs = read_hdf5(_models_path, channel_label)
+    models_dict = dict.fromkeys(popsynth_outputs.keys())
+    weights_dict = dict.fromkeys(popsynth_outputs.keys())
+
+    for key in popsynth_outputs.keys():
+        models_dict[key] = popsynth_outputs[key][_params]
+        weights_dict[key]= popsynth_outputs[key]['weight']
+
+    chi_b_id = 0
+    alpha_id = 4
+    
+    fig, ax = plt.subplots(2,2)
+
+    for row, ratio in enumerate[llh_ratio_kde_flow_reg, llh_ratio_kde_flow_unreg]:
+        c = ax[row,0].imshow(np.swapaxes(ratio, 0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower',\
+            vmin=-90, vmax=90, aspect='auto', cmap='RdBu')
+        cbar = fig.colorbar(c, ax=ax[0], cmap='RdBu')
+        cbar.set_label(r'ln $p_\mathrm{flow} \minus$ln $p_\mathrm{KDE}$')
+        #c = ax[chibid,1].imshow(np.swapaxes(oldratio, 0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower', vmin=-6, vmax=6, aspect='auto')
+
+        ax[row,0].set_xlabel(r'$\mathcal{M}_{\mathrm{c}}$ /$M_{\odot}$')
+        ax[row,0].set_ylabel(r'$q$')
+
+        bin_width = 0.05
+        chieffs = popsynth_outputs[(chi_b_id,alpha_id)][:]['chieff']
+        zs = popsynth_outputs[(chi_b_id,alpha_id)][:]['z']
+        bin_chieff = np.logical_and(chieffs>0.0 - 2*bin_width,  chieffs< 0.0 + 2*bin_width)
+        bin_z = np.logical_and(zs>0.2 - 10*bin_width, zs < 0.2 + 10*bin_width)
+        bin_conditions = np.logical_and(bin_chieff, bin_z)
+
+        c = ax[row, 1].imshow(np.swapaxes(ratio,0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower',\
+            vmin=-90, vmax=90, aspect='auto', zorder=-200, cmap='RdBu')
+
+        corner.hist2d(np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['mchirp']),\
+            np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['q']), \
+            weights=np.array(weights_dict[(chi_b_id,alpha_id)][bin_conditions]), alpha=0.5, density=True, ax=ax[1], no_fill_contours=True)
+        ax[row,1].set_xlim(mchirps[0], mchirps[-1])
+        ax[row,1].set_ylim(qs[0], qs[-1])
+    ax[1,1].set_xlabel(r'$\mathcal{M}_{\mathrm{c}}$ /$M_{\odot}$')
+    fig.tight_layout(pad=1.3)
+    fig.savefig(f'{_basepath}/pdfs/CE2Dmchirpq_llhratio.pdf')
 

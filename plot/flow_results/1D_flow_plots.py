@@ -59,8 +59,8 @@ def calc_llh_ratio_nonCE(channel, obsdata, p_theta, flow, KDE, submodels_dict, u
     for chibid in range(4):
         for i,obs in enumerate(obsdata):
             obs = np.reshape(obs, (1,1,4))
-            lnlike_flow_theta[chibid,i] = sample.lnlike([chibid], obs, flow, submodels_dict, [channel], use_flows=True, prior_pdf=np.array([p_theta[i]]), use_reg=use_reg)
-            lnlike_kde_theta = sample.lnlike([chibid],obs, KDE, submodels_dict, [channel], use_flows=False, prior_pdf=[p_theta[i]], use_reg=use_reg)
+            lnlike_flow_theta[chibid,i] = sample.lnlike([chibid], obs, flow, submodels_dict, [channel], use_flows=True, prior_pdf=np.array([p_theta[i]]))
+            lnlike_kde_theta = sample.lnlike([chibid],obs, KDE, submodels_dict, [channel], use_flows=False, prior_pdf=[p_theta[i]])
             llh_ratio_kde_flow[chibid,i] = lnlike_flow_theta[chibid,i]-lnlike_kde_theta
     return llh_ratio_kde_flow
 
