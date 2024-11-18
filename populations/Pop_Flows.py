@@ -646,7 +646,7 @@ class FlowModel(Model):
             data *=rescale_max
         return(data)
 
-    def train(self, no_trans, no_bins, no_neurons, lr, epochs, batch_no, filepath, use_wandb=False):
+    def train(self, no_trans, no_bins, no_neurons, lr, epochs, batch_no, filepath, testCEmodel, use_wandb=False):
         """
         Trains the normalising flow with certain configuration of flow network parameters.
         Saves these network parameters to a json config file, and saves flow post training
@@ -688,7 +688,7 @@ class FlowModel(Model):
             json.dump(channel_json, f)
 
         #map the training samples etc 
-        training_data, val_data, self.mappings = self.map_samples(self.samples, self.params, filepath)
+        training_data, val_data, self.mappings = self.map_samples(self.samples, self.params, filepath, testCEsmdl)
 
         save_filename = f'{filepath}{self.channel_label}'
         #train the normalising flow

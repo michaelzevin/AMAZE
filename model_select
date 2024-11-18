@@ -63,8 +63,7 @@ argp.add_argument("--no-neurons", nargs="+", default=[128,128,128,128,128,128], 
 argp.add_argument("--batch-no", type=int, default='10', help="Number of batches to train flow models. Default=10.")
 argp.add_argument("--device", type=str, default='cpu', help="Device to run model select on. Default=cpu, otherwise choose cuda:X where X is the slot of the GPU.")
 argp.add_argument("--use-wandb", action="store_true", help="Whether or not to use Weights and biases to run a sweep over optimising parameters of the normalising flows.")
-argp.add_argument("--use-unityweights", action="store_true", help="If true sets cosmoweights to 1 (flows) or 1/no_smdl_samples (kde) for all samples")
-argp.add_argument("--randch-weights", action="store_true", help="If true choses training and validation samples according to weights instead of a weighted KL")
+argp.add_argument("--testCEmodel", action="store_true", help="If true removes the chi_b=0.1, alphaCE=1.0 training samples during the flow training to test interpolation.")
 argp.add_argument("--regularisation_N", type=str, default=None, help="If not none, is used as N in the regularisation term during inference")
 
 
@@ -342,7 +341,7 @@ if use_flows==True:
                 pop_models[channel].wandb_init(int(args.epochs[i]))
             else:
                 pop_models[channel].train(int(args.no_trans[i]), int(args.spline_bins[i]), int(args.no_neurons[i]), lr[i], \
-                    int(args.epochs[i]), args.batch_no, args.flow_model_filename, use_wandb)
+                    int(args.epochs[i]), args.batch_no, args.flow_model_filename, args.testCEmodel, use_wandb)
         else:
             pop_models[channel].load_model(args.flow_model_filename, device=args.device)
 else:
@@ -384,6 +383,8 @@ while all_models_at_deepest==False:
     # see if all models are at deepest level else repeat
     all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
 
+if args.random_seed:
+    np.random.seed(args.random_seed)
 
 # --- Do the sampling!
 if discrete_sample:

@@ -39,7 +39,7 @@ class Sampler(object):
     def __init__(self, model_names, **kwargs):
         """
         model_names : list of str
-            channel, chib, alpha of each eubmodel of form
+            channel, chib, alpha of each submodel of form
             'CE/chi00/alpha02' or 'SMT/chi00'
         """
 

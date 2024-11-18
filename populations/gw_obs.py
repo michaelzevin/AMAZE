@@ -149,6 +149,9 @@ def generate_observations(params, gwpath, Nsamps, mesaurement_uncertainty='delta
                 samples[idx, :, pidx] = np.random.normal(loc=mean, \
                                                 scale=sigma, size=Nsamps)
         if mesaurement_uncertainty == 'posteriors':
+            
+            #set random seed for consistant posterior samples
+            np.random.seed(12)
             if len(df) >= Nsamps:
                 sample_idxs = np.random.choice(np.arange(len(df)), size=Nsamps, replace=False)
             else:
