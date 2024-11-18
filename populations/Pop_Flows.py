@@ -327,12 +327,6 @@ class FlowModel(Model):
             if testCEsmdl:
                 test_model_id = [1,2]
                 test_model_id_flat = 7
-                self.total_hps = self.total_hps - 1
-
-            #initialise arrays for model size
-            model_size = np.zeros((4,5))
-            cumulsize = np.zeros(self.total_hps)
-            weights_idxs = []
 
             #tile list of chi_bs and alpha_CEs into liost for each training sub-population
             chi_b_alpha_pairs= np.zeros((self.total_hps, 2))
@@ -340,6 +334,12 @@ class FlowModel(Model):
             chi_b_alpha_pairs[:,1] = np.tile(np.log(self.hps[1]), np.shape(self.hps[0])[0])
             if testCEsmdl:
                 chi_b_alpha_pairs = np.delete(chi_b_alpha_pairs, test_model_id_flat, axis=0)
+                self.total_hps = self.total_hps - 1
+
+            #initialise arrays for model size
+            model_size = np.zeros((4,5))
+            cumulsize = np.zeros(self.total_hps)
+            weights_idxs = []
 
             #meaure no samples in each population, and the cumulative samples in each population used for training
             i=0
