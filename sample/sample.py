@@ -24,7 +24,7 @@ _posterior = 'emcee_lnpost'
 
 _nwalkers = 250
 _nsteps = 1000
-_fburnin = 0.2
+_fburnin = 0.4
 
 _hyperparam_bounds = [[0.,0.5],[0.2,5.]]
 
