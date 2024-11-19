@@ -17,7 +17,7 @@ from scipy.stats import loguniform
 from matplotlib import gridspec
 
 import sys
-sys.path.append('../../')
+sys.path.append('/data/wiay/2297403c/amaze_model_select/AMAZE_model_selection/')
 from populations.bbh_models import *
 from populations.Pop_Flows import FlowModel
 from sample.sample import lnlike_disc
@@ -32,12 +32,11 @@ _channels = ['CE','CHE','GC','NSC','SMT']
 _chi_b=[0.0,0.1,0.2,0.5]
 _alpha_CE=[0.2,0.5,1.0,2.0,5.0]
 
-_param_label = ['Chirp Mass /$M_{\odot}$','Mass Ratio', 'Effective Spin', 'Redshift']
 _param_bounds = {"mchirp": (0,70), "q": (0.25,1), "chieff": (-0.5,1), "z": (0,1.25)}
 _param_ticks = {"mchirp": [0,10,20,30,40,50,60,70], "q": [0.25,0.5,0.75,1], "chieff": [-0.5,0,0.5,1], "z": [0,0.25,0.5,0.75,1.0,1.25]}
 _pdf_bounds = {"mchirp": (0,0.075), "q": (0,32), "chieff": (0,17), "z": (0,4)}
 _pdf_ticks = {"mchirp": [0.0,0.025,0.050,0.075], "q": [0,10,20,30], "chieff": [0,4,8,12,16], "z": (0,1,2,3,4)}
-_labels_dict = {"mchirp": r"$\mathcal{M}_{\rm c}$ [$M_{\odot}$]", "q": r"$q$", \
+_labels_dict = {"mchirp": r"$\mathcal{M}$ /$M_{\odot}$", "q": r"$q$", \
 "chieff": r"$\chi_{\rm eff}$", "z": r"$z$", "chi00": r"$\chi_\mathrm{b}=0.0$", \
 "chi01": r"$\chi_\mathrm{b}=0.1$", "chi02": r"$\chi_\mathrm{b}=0.2$", \
 "chi05": r"$\chi_\mathrm{b}=0.5$", "alpha02": r"$\alpha_\mathrm{CE}=0.2$", \
@@ -46,6 +45,7 @@ _labels_dict = {"mchirp": r"$\mathcal{M}_{\rm c}$ [$M_{\odot}$]", "q": r"$q$", \
 "CE": r"$\texttt{CE}$", "CHE": r"$\texttt{CHE}$", "GC": r"$\texttt{GC}$", \
 "NSC": r"$\texttt{NSC}$", "SMT": r"$\texttt{SMT}$", \
 "chi_b": r"$\chi_\mathrm{b}$", "alpha_CE": r"$\alpha_\mathrm{CE}$"}
+_param_label = [_labels_dict["mchirp"],_labels_dict["q"], _labels_dict["chieff"], _labels_dict["z"]]
 _Nsamps = 100000
 _channel_label =[r'$\beta_{\mathrm{CE}}$',r'$\beta_{\mathrm{CHE}}$',r'$\beta_{\mathrm{GC}}$',r'$\beta_{\mathrm{NSC}}$',r'$\beta_{\mathrm{SMT}}$']
 
@@ -97,7 +97,7 @@ def load_result_samps(filenames, discrete_result=False, Nhyper=2, Nchannels=5, d
 
     return samples_allchains
 
-def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=None):
+def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=None, outdir=_basepath):
     
     popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
 
@@ -135,23 +135,23 @@ def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=
             kde_samples = KDE_models[channel_label][submodels_dict[0][KDE_hyperparam_idxs[0]]][submodels_dict[1][KDE_hyperparam_idxs[1]]].sample(_Nsamps)
         else:
             kde_samples = KDE_models[channel_label][submodels_dict[0][KDE_hyperparam_idxs[0]]].sample(_Nsamps)
-        np.save(f"{_basepath}/data/{channel_label}_KDEs_cornersample.npy", kde_samples)
+        np.save(f"{outdir}/data/{channel_label}_KDEs_cornersample.npy", kde_samples)
         
     print('saving samples...')
-    np.save(f"{_basepath}/data/{channel_label}_flows_cornersample.npy", flow_samples_stack)
+    np.save(f"{outdir}/data/{channel_label}_flows_cornersample.npy", flow_samples_stack)
     print('samples saved')
 
 
-def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None, conditional=None, plot_KDE=True):
+def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None, conditional=None, plot_KDE=True, outdir=_basepath):
 
     #get samples from models, either sampling first or loading from file
     if justplot==False:
-        sample_pop_corner( flow_dir, channel_label, conditional, KDE_hyperparam_idxs=hyperparam_idxs)
+        sample_pop_corner( flow_dir, channel_label, conditional, KDE_hyperparam_idxs=hyperparam_idxs, outdir=outdir)
     if type(hyperparam_idxs) == type(None):
         pass
     else:
-        kde_samples = np.load(f"{_basepath}/data/{channel_label}_KDEs_cornersample.npy")
-    flow_samples= np.load(f"{_basepath}/data/{channel_label}_flows_cornersample.npy")
+        kde_samples = np.load(f"{outdir}/data/{channel_label}_KDEs_cornersample.npy")
+    flow_samples= np.load(f"{outdir}/data/{channel_label}_flows_cornersample.npy")
 
     #get training population samples
     popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
@@ -179,6 +179,7 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
     plt.rcParams['figure.figsize'] = [figure_width, figure_width]
 
     #plot flow samples without training models or KDEs if off of training model grid
+    print('plotting samples')
     if type(hyperparam_idxs) == type(None):
         fig=corner.corner(flow_samples, **corner_kwargs_flow)
     #else plot training models, KDE if plotting, and flow last
@@ -200,9 +201,10 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
             bbox_to_anchor=(1, 4), loc="upper right"
         )
     #save figure
-    plt.savefig(f"{_basepath}/pdfs/{channel_label}_flowKDEmodel_corner_chib{hyperparam_idxs[0]}.pdf")
+    fig.set_size_inches(figure_width*2, figure_width*2)
+    plt.savefig(f"{outdir}/pdfs/{channel_label}_flowKDEmodel_corner_chib{hyperparam_idxs[0]}.pdf")
 
-def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], figure_name='Discrete'):
+def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], figure_name='Discrete', outdir=_basepath):
     plt.rcParams['figure.figsize'] = [figure_width, figure_width/4]
     channels = _channels
     submodels_dict= {0: {0: 'chi00', 1: 'chi01', 2: 'chi02', 3: 'chi05'}, \
@@ -276,10 +278,10 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
         if hyper_idx ==1:
             ax_margs[1,0].legend(loc='lower left', bbox_to_anchor=(-1.0, 1.02), ncol=5, prop={'size':10})
     plt.subplots_adjust(top=0.85)
-    plt.savefig(f"{_basepath}/pdfs/{figure_name}_flowKDE_infresults.pdf")
+    plt.savefig(f"{outdir}/pdfs/{figure_name}_flowKDE_infresults.pdf")
         
 
-def make_1D_result_continuous(filenames, second_files=None, figure_name='Continuous', detectable=False):
+def make_1D_result_continuous(filenames, second_files=None, figure_name='Continuous', detectable=False, outdir=_basepath):
     channels = _channels
     plt.rcParams['figure.figsize'] = [figure_width, figure_width/2]
     colors = ['royalblue','lightskyblue','darkblue']
@@ -358,9 +360,9 @@ def make_1D_result_continuous(filenames, second_files=None, figure_name='Continu
         subfigs[0].delaxes(ax_chibalpha[0])
         subfigs[0].delaxes(ax_chibalpha[1])
         fig.sca(subfigs[1])
-    plt.savefig(f"{_basepath}/pdfs/{figure_name}_flowKDE_infresults.pdf")
+    plt.savefig(f"{outdir}/pdfs/{figure_name}_flowKDE_infresults.pdf")
 
-def save_detectable_betas(filenames, analysis_name):
+def save_detectable_betas(filenames, analysis_name, outdir=_basepath):
     #in case detectable betas weren't saved during model_select run, save them now
     #for continuous results only
 
@@ -394,14 +396,15 @@ def save_detectable_betas(filenames, analysis_name):
         columns.append('beta_'+channel)
         
     df = pd.DataFrame(np.hstack([samples_allchains[:,:2],converted_betas]), columns=columns)
-    df.to_hdf(f'{_basepath}/data/{analysis_name}_detectable_betas.hdf5', key='model_selection/detectable_samples')
+    df.to_hdf(f'{outdir}/data/{analysis_name}_detectable_betas.hdf5', key='model_selection/detectable_samples')
 
-def calc_llh_ratio_CE(flow_dir):
+def calc_llh_ratio_CE(flow_dir, outdir=_basepath):
 
     channel_label = 'CE'
     popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
 
-    flow = FlowModel(channel_label, popsynth_outputs, _params, flow_path=flow_dir, sensitivity='midhighlatelow', device='cpu')
+    model_names, flow = get_models(_models_path, [channel_label], _params, use_flows=True, \
+         detectable=False, senseitivity='midhighlatelow', flow_path=flow_dir, device='cpu')
     model_names, KDE_models = get_models(_models_path, [channel_label], _params, use_flows=False, normalize=False,\
          detectable=False, senseitivity='midhighlatelow')
 
@@ -418,7 +421,7 @@ def calc_llh_ratio_CE(flow_dir):
             submodels_dict[ctr][idx] = model
         ctr += 1
 
-    flow.load_model(flow_dir, device='cpu')
+    flow[channel_label].load_model(flow_dir, device='cpu')
 
     mchirps = np.linspace(4.,49.9,20)
     qs = np.linspace(0.01,0.99,20)
@@ -447,15 +450,22 @@ def calc_llh_ratio_CE(flow_dir):
     llh_ratio_kde_flow_unreg = np.log10(np.exp(p_mchirpq_unreg-p_mchirpq_kde_unreg))
 
     #save ratios
-    np.save(f"{_basepath}/data/llh_ratio_kde_flow_reg.npy", llh_ratio_kde_flow_reg)
-    np.save(f"{_basepath}/data/llh_ratio_kde_flow_unreg.npy", llh_ratio_kde_flow_unreg)
+    np.save(f"{outdir}/data/llh_ratio_kde_flow_reg.npy", llh_ratio_kde_flow_reg)
+    np.save(f"{outdir}/data/llh_ratio_kde_flow_unreg.npy", llh_ratio_kde_flow_unreg)
 
     return mchirps, qs, llh_ratio_kde_flow_reg, llh_ratio_kde_flow_unreg
 
-def plot_llh_ratio_CE(flow_dir):
-    plt.rcParams['figure.figsize'] = [figure_width/2, figure_width/2]
+def plot_llh_ratio_CE(flow_dir, outdir, justplot=False):
+    plt.rcParams['figure.figsize'] = [figure_width, figure_width*1.2]
+    channel_label = 'CE'
     
-    mchirps, qs, llh_ratio_kde_flow_reg, llh_ratio_kde_flow_unreg = calc_llh_ratio_CE(flow_dir)
+    if justplot:
+        mchirps = np.linspace(4.,49.9,20)
+        qs = np.linspace(0.01,0.99,20)
+        llh_ratio_kde_flow_reg = np.load(f"{outdir}/data/llh_ratio_kde_flow_reg.npy")
+        llh_ratio_kde_flow_unreg = np.load(f"{outdir}/data/llh_ratio_kde_flow_unreg.npy")
+    else:
+        mchirps, qs, llh_ratio_kde_flow_reg, llh_ratio_kde_flow_unreg = calc_llh_ratio_CE(flow_dir, outdir)
 
     popsynth_outputs = read_hdf5(_models_path, channel_label)
     models_dict = dict.fromkeys(popsynth_outputs.keys())
@@ -468,17 +478,16 @@ def plot_llh_ratio_CE(flow_dir):
     chi_b_id = 0
     alpha_id = 4
     
-    fig, ax = plt.subplots(2,2)
+    fig, ax = plt.subplots(2,1)
+    cbar_scales =[90,4]
 
-    for row, ratio in enumerate[llh_ratio_kde_flow_reg, llh_ratio_kde_flow_unreg]:
-        c = ax[row,0].imshow(np.swapaxes(ratio, 0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower',\
-            vmin=-90, vmax=90, aspect='auto', cmap='RdBu')
-        cbar = fig.colorbar(c, ax=ax[0], cmap='RdBu')
-        cbar.set_label(r'ln $p_\mathrm{flow} \minus$ln $p_\mathrm{KDE}$')
-        #c = ax[chibid,1].imshow(np.swapaxes(oldratio, 0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower', vmin=-6, vmax=6, aspect='auto')
+    for row, ratio in enumerate([llh_ratio_kde_flow_unreg, llh_ratio_kde_flow_reg]):
+        c = ax[row].imshow(np.swapaxes(ratio, 0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower',\
+            vmin=-cbar_scales[row], vmax=cbar_scales[row], aspect='auto', cmap='RdBu')
+        cbar = fig.colorbar(c, ax=ax[row], cmap='RdBu')
+        cbar.set_label(r'log$_{10}$ (p$_\mathrm{flow}/$p$_\mathrm{KDE}$)')
 
-        ax[row,0].set_xlabel(r'$\mathcal{M}_{\mathrm{c}}$ /$M_{\odot}$')
-        ax[row,0].set_ylabel(r'$q$')
+        ax[row].set_ylabel({_labels_dict['q']})
 
         bin_width = 0.05
         chieffs = popsynth_outputs[(chi_b_id,alpha_id)][:]['chieff']
@@ -487,15 +496,18 @@ def plot_llh_ratio_CE(flow_dir):
         bin_z = np.logical_and(zs>0.2 - 10*bin_width, zs < 0.2 + 10*bin_width)
         bin_conditions = np.logical_and(bin_chieff, bin_z)
 
-        c = ax[row, 1].imshow(np.swapaxes(ratio,0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower',\
-            vmin=-90, vmax=90, aspect='auto', zorder=-200, cmap='RdBu')
+        c = ax[row].imshow(np.swapaxes(ratio,0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower',\
+            vmin=-cbar_scales[row], vmax=cbar_scales[row], aspect='auto', zorder=-200, cmap='RdBu')
 
         corner.hist2d(np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['mchirp']),\
-            np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['q']), \
-            weights=np.array(weights_dict[(chi_b_id,alpha_id)][bin_conditions]), alpha=0.5, density=True, ax=ax[1], no_fill_contours=True)
-        ax[row,1].set_xlim(mchirps[0], mchirps[-1])
-        ax[row,1].set_ylim(qs[0], qs[-1])
-    ax[1,1].set_xlabel(r'$\mathcal{M}_{\mathrm{c}}$ /$M_{\odot}$')
+            np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['q']), bins =16, levels=(1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-4.5)), \
+            weights=np.array(weights_dict[(chi_b_id,alpha_id)][bin_conditions]), pcolor_kwargs=dict(alpha=0.0), density=True, ax=ax[row], no_fill_contours=True,\
+            plot_datapoints=False)
+        ax[row].set_xlim(mchirps[0], mchirps[-1])
+        ax[row].set_ylim(qs[0], qs[-1])
+        ax[1].set_xlabel({_labels_dict['mchirp']})
+
+
     fig.tight_layout(pad=1.3)
-    fig.savefig(f'{_basepath}/pdfs/CE2Dmchirpq_llhratio.pdf')
+    fig.savefig(f'{outdir}/pdfs/CE2Dmchirpq_llhratio.pdf')
 
