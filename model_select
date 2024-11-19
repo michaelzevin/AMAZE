@@ -84,7 +84,7 @@ use_flows=args.use_flows
 discrete_sample=args.discrete_sample
 use_wandb=args.use_wandb
 lr = np.array(args.lr, dtype=float)
-print_file = open(f"outdir/output_{args.name}_seed{args.random_seed}.txt", "a")
+print_file = open(f"outdir/output_{args.name}.txt", "a")
 
 # Check whether to use normalising flows or KDEs for inference, and if using KDEs set discrete inference to True
 if use_flows==True:
