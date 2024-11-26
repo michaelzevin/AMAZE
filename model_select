@@ -131,9 +131,9 @@ else:
     if verbose:
         print_both(print_file, "\nReading models, applying transformations, and initializing underlying KDEs...\n")
     model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
-        sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=False, use_unityweights=args.use_unityweights)
+        sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=False)
     _, pop_models_detectable = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
-        sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=True, use_unityweights=args.use_unityweights)
+        sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=True)
 
 #grab model hyperparameters from model input file
 model_names.sort()
