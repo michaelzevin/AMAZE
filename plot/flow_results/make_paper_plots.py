@@ -17,6 +17,7 @@ argp.add_argument("--flow-path", type=str, default=None, help="Directory from wh
 
 argp.add_argument("--plot-discrete-result", action="store_true", help="True if plotting discrete result. Default=False.")
 argp.add_argument("--plot-cont-result", action="store_true", help="True if plotting continuous result. Default=False.")
+argp.add_argument("--plot-flow-corner", action="store_true", help="True if plotting flow model corner plots. Default=False.")
 argp.add_argument("--discrete-result-path", type=str, default=None, help="Directory from where to load discrete result files. Default=None.")
 argp.add_argument("--cont-result-path", type=str, default=None, help="Directory from where to load continuous inference result files. Default=None.")
 argp.add_argument("--KDE-result-path", type=str, default=None, help="Directory from where to load discrete KDE result files. Default=None.")
@@ -39,22 +40,27 @@ hyperparam_idxs = args.hyperparam_idxs
 conditional = np.array(args.conditional)
 justplot = args.justplot
 name = args.name
+cont_result_path = args.cont_result_path
 
 #make corner plots of specified population
-for channel in channel_label:
-    make_pop_corner(channel, hyperparam_idxs, justplot=justplot, flow_dir=flow_dir, conditional=conditional, outdir=outdir)
+if args.plot_flow_corner:
+    for channel in channel_label:
+        make_pop_corner(channel, hyperparam_idxs, justplot=justplot, flow_dir=flow_dir, conditional=conditional, outdir=outdir)
 
 #plot_llh_ratio_CE(flow_dir, outdir=outdir, justplot=justplot)
 
-
-if plot_discrete_result:
+if args.plot_discrete_result:
     discrete_result_files = glob.glob(f'{discrete_result_path}/*.hdf5')
     try:
         KDE_result_files = glob.glob(f'{discrete_result_path_KDE}/*.hdf5')
-        make_1D_result_discrete(discrete_result_files, second_files=KDE_result_files, labels = [' flow', ' KDE'], figure_name='DiscreteKDE')
+        make_1D_result_discrete(discrete_result_files, second_files=KDE_result_files, labels = [' flow', ' KDE'], figure_name='DiscreteKDE', outdir=outdir)
     except FileNotFoundError():
-        make_1D_result_discrete(discrete_result_files, second_files=None, labels = [' flow', None], figure_name='Discrete')
+        make_1D_result_discrete(discrete_result_files, second_files=None, labels = [' flow', None], figure_name='Discrete', outdir=outdir)
 
-if plot_cont_result:
+if args.plot_cont_result:
     cont_result_files = glob.glob(f'{cont_result_path}/*.hdf5')
-    make_1D_result_continuous(cont_result_files)
+    make_1D_result_continuous(cont_result_files, filenames_det=cont_result_files, outdir=outdir, detectable=True)
+
+    #plot dataspace result
+    cont_result_files = glob.glob(f'{cont_result_path}/*.hdf5')
+    plot_samps_dataspace(cont_result_files, flow_dir, outdir, justplot)
