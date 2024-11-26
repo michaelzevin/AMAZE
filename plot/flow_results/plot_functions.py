@@ -32,7 +32,7 @@ _channels = ['CE','CHE','GC','NSC','SMT']
 _chi_b=[0.0,0.1,0.2,0.5]
 _alpha_CE=[0.2,0.5,1.0,2.0,5.0]
 
-_param_bounds = {"mchirp": (0,70), "q": (0.25,1), "chieff": (-0.5,1), "z": (0,1.25)}
+_param_bounds = {"mchirp": (-1.,70), "q": (0.08,1.01), "chieff": (-0.6,1.), "z": (-0.1,3.5)}
 _param_ticks = {"mchirp": [0,10,20,30,40,50,60,70], "q": [0.25,0.5,0.75,1], "chieff": [-0.5,0,0.5,1], "z": [0,0.25,0.5,0.75,1.0,1.25]}
 _pdf_bounds = {"mchirp": (0,0.075), "q": (0,32), "chieff": (0,17), "z": (0,4)}
 _pdf_ticks = {"mchirp": [0.0,0.025,0.050,0.075], "q": [0,10,20,30], "chieff": [0,4,8,12,16], "z": (0,1,2,3,4)}
@@ -48,6 +48,8 @@ _labels_dict = {"mchirp": r"$\mathcal{M}$ /$M_{\odot}$", "q": r"$q$", \
 _param_label = [_labels_dict["mchirp"],_labels_dict["q"], _labels_dict["chieff"], _labels_dict["z"]]
 _Nsamps = 100000
 _channel_label =[r'$\beta_{\mathrm{CE}}$',r'$\beta_{\mathrm{CHE}}$',r'$\beta_{\mathrm{GC}}$',r'$\beta_{\mathrm{NSC}}$',r'$\beta_{\mathrm{SMT}}$']
+_channel_label_det =[r'$\beta_{\mathrm{CE}}^{\mathrm{det}}$',r'$\beta_{\mathrm{CHE}}^{\mathrm{det}}$',r'$\beta_{\mathrm{GC}}^{\mathrm{det}}$',\
+    r'$\beta_{\mathrm{NSC}}^{\mathrm{det}}$',r'$\beta_{\mathrm{SMT}}^{\mathrm{det}}$']
 
 
 _models_path ='/data/wiay/2297403c/models_reduced.hdf5'
@@ -88,10 +90,7 @@ def load_result_samps(filenames, discrete_result=False, Nhyper=2, Nchannels=5, d
             result_key = 'detectable_samples'
         else:
             result_key = 'samples'
-        if discrete_result:
-            samples_file =np.hstack([result['model_selection'][result_key]['block1_values'], result['model_selection'][result_key]['block0_values']])
-        else:
-            samples_file = result['model_selection'][result_key]['block0_values']
+        samples_file = result['model_selection'][result_key]['block0_values']
         samples_allchains = np.append(samples_allchains, samples_file)
         samples_allchains = np.reshape(samples_allchains, (-1, Nhyper+Nchannels))
 
@@ -101,7 +100,7 @@ def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=
     
     popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
 
-    weighted_flow = FlowModel(channel_label, popsynth_outputs, _params, flow_path=flow_dir,  device='cpu', sensitivity='midhighlatelow')
+    weighted_flow = FlowModel(channel_label, popsynth_outputs, _params, flow_path=flow_dir,  device='cpu', sensitivity='midhighlatelow_network')
     model_names, KDE_models = get_models(_models_path, [channel_label], _params, use_flows=False, normalize=False, detectable=False)
 
     hyperparams = list(set([x.split('/', 1)[1] for x in model_names]))
@@ -205,7 +204,7 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
     plt.savefig(f"{outdir}/pdfs/{channel_label}_flowKDEmodel_corner_chib{hyperparam_idxs[0]}.pdf")
 
 def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], figure_name='Discrete', outdir=_basepath):
-    plt.rcParams['figure.figsize'] = [figure_width, figure_width/4]
+    plt.rcParams['figure.figsize'] = [figure_width*2, figure_width]
     channels = _channels
     submodels_dict= {0: {0: 'chi00', 1: 'chi01', 2: 'chi02', 3: 'chi05'}, \
     1: {0: 'alpha02', 1: 'alpha05', 2: 'alpha10', 3: 'alpha20', 4: 'alpha50'}}
@@ -214,8 +213,8 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
     _concentration = np.ones(len(channels))
     beta_p0 =  dirichlet.rvs(_concentration, size=100000)
 
-    fig, ax_margs = plt.subplots(2,5)
-    fig.tight_layout(h_pad=3)
+    fig, ax_margs = plt.subplots(2,5, gridspec_kw={'wspace': 0.22, 'hspace': 0.5})
+    fig.tight_layout(h_pad=3, w_pad=0.05)
 
     #add together samples from multiple files
     samples_allchains = load_result_samps(filenames, discrete_result=True)
@@ -234,13 +233,14 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
                 factor = 50/(len(samples_allchains[:, cidx+Nhyper]))
                 h, bins, _ = ax_margs[hyper_idx,cidx].hist(samples_allchains[smdl_locs, cidx+Nhyper], \
                     histtype='step', color=cp[midx], bins=50, ls='-', lw=1.5, \
-                    label=_labels_dict[model]+labels[0],\
+                    label=_labels_dict[model],\
                     weights=factor*np.ones_like(samples_allchains[smdl_locs, cidx+Nhyper]))
                 if second_files:
                     factor_comp = 50/(len(samples_allchains_comp[:, cidx+Nhyper]))
                     h, bins, _ = ax_margs[hyper_idx,cidx].hist(samples_allchains_comp[comp_smdl_locs, cidx+Nhyper], \
                         histtype='stepfilled', color=cp[midx], bins=50, \
-                        alpha=0.3, label=_labels_dict[model]+labels[1],\
+                        alpha=0.3, \
+                        #label=_labels_dict[model]+labels[1],\
                         weights=factor_comp*np.ones_like(samples_allchains_comp[comp_smdl_locs, cidx+Nhyper]))
                     h, bins, _ = ax_margs[hyper_idx,cidx].hist(samples_allchains_comp[comp_smdl_locs, cidx+Nhyper], \
                         histtype='step', color=cp[midx], bins=50, \
@@ -253,7 +253,7 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
             upper_95 = np.percentile(samples_allchains[:, cidx+Nhyper], 95)
             median = np.percentile(samples_allchains[:, cidx+Nhyper], 50)
 
-            ax_marg[hyper_idx].vlines([lower_5, median, upper_95], 0,20, color='black', alpha=0.5, lw=0.5)
+            #ax_marg[hyper_idx].vlines([lower_5, median, upper_95], 0,20, color='black', alpha=0.5, lw=0.5)
 
             #plot prior
             h, bins, _ = ax_marg[hyper_idx].hist(beta_p0[:,cidx], \
@@ -263,54 +263,61 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
                     histtype='step', color='black', bins=50, ls='--', lw=1.0, \
                     alpha=0.7, density=True)
 
-            ax_marg[1].set_xlabel(_channel_label[cidx], fontsize=15)
+            ax_marg[1].set_xlabel(_channel_label[cidx])
             ax_marg[hyper_idx].set_yscale('log')
 
             ax_marg[hyper_idx].set_xlim(0,1)
             ax_marg[hyper_idx].set_ylim(int(1e-3),20)
             if cidx == 0:
-                ax_marg[hyper_idx].set_ylabel(r"p($\beta$)", fontsize=15)
+                ax_marg[hyper_idx].set_ylabel(r"p($\beta$)")
             else:
                 ax_marg[hyper_idx].tick_params(labelleft=False)
         # legend
         if hyper_idx == 0:
-            ax_margs[0,0].legend(loc='lower left', bbox_to_anchor=(0.5, 1.02), ncol=4, prop={'size':10})
+            ax_margs[0,0].legend(loc='lower left', bbox_to_anchor=(.7, 1.02), ncol=4)
         if hyper_idx ==1:
-            ax_margs[1,0].legend(loc='lower left', bbox_to_anchor=(-1.0, 1.02), ncol=5, prop={'size':10})
+            ax_margs[1,0].legend(loc='lower left', bbox_to_anchor=(-0.05, 1.02), ncol=5)
+
     plt.subplots_adjust(top=0.85)
     plt.savefig(f"{outdir}/pdfs/{figure_name}_flowKDE_infresults.pdf")
         
 
-def make_1D_result_continuous(filenames, second_files=None, figure_name='Continuous', detectable=False, outdir=_basepath):
+def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Continuous', detectable=False, outdir=_basepath):
     channels = _channels
-    plt.rcParams['figure.figsize'] = [figure_width, figure_width/2]
     colors = ['royalblue','lightskyblue','darkblue']
     _concentration = np.ones(len(channels))
     beta_p0 =  dirichlet.rvs(_concentration, size=100000)
-    #alphaCE_p0 =  loguniform.rvs(_concentration, size=100000)
+    alpha_CE_p0 =  loguniform.rvs(_alpha_CE[0], _alpha_CE[-1], size=100000)
     Nhyper =2
 
     fig = plt.figure(layout='constrained')
-    subfigs = fig.subfigures(2, 1, height_ratios=[1.,1.])
+    if detectable==False:
+        plt.rcParams['figure.figsize'] = [figure_width*2, figure_width]
+        subfigs = fig.subfigures(2, 1, height_ratios=[1.,1.])
+    else:
+        plt.rcParams['figure.figsize'] = [figure_width*2, figure_width*1.5]
+        subfigs = fig.subfigures(3, 1, height_ratios=[1.,1., 1.])
+        ax_margs_det = subfigs[2].subplots(1, 5)
     ax_chibalpha = subfigs[0].subplots(1, 2)
     ax_margs = subfigs[1].subplots(1, 5)
 
     #add together samples from multiple files
-    samples_allchains = load_result_samps(filenames, detectable=detectable)
-    if second_files:
-        samples_allchains_comp = load_result_samps(second_files, detectable=detectable)
-    else:
-        samples_allchains_comp = np.array([])
+    samples_allchains = load_result_samps(filenames, detectable=False)
+    if detectable:
+        samples_allchains_detectable = load_result_samps(filenames_det, detectable=True)
 
-    for i, samples in enumerate(np.array([samps for samps in [samples_allchains, samples_allchains_comp] if len(samps)>0])):
-        h, bins, _ = ax_chibalpha[0].hist(samples[:, 0], density=True,\
-            histtype='step', color=colors[i], bins=50, ls='-', lw=1.5)
-        h, bins, _ = ax_chibalpha[1].hist(samples[:, 1], density=True,\
-            histtype='step', color=colors[i], bins=50, ls='-', lw=1.5)
+    sample_sets = np.array([samps for samps in [samples_allchains, samples_allchains_detectable] if len(samps)>0])
 
+    #plot posteriors on chi_b and alpha_CE
+    h, bins, _ = ax_chibalpha[0].hist(samples_allchains[:, 0], density=True,\
+        histtype='step', color=colors[0], bins=50, ls='-', lw=1.5)
+    h, bins, _ = ax_chibalpha[1].hist(samples_allchains[:, 1], density=True,\
+        histtype='step', color=colors[0], bins=50, ls='-', lw=1.5)
+
+    for i, (samples,axes) in enumerate(zip(sample_sets, [ax_margs, ax_margs_det])):
         for cidx, channel in enumerate(channels):
-            h, bins, _ = ax_margs[cidx].hist(samples[:,cidx+Nhyper], density=True,\
-                histtype='step', color=colors[i], bins=50, ls='-', lw=1.5)
+            h, bins, _ = axes[cidx].hist(samples[:,cidx+Nhyper], density=True,\
+                histtype='step', color=colors[0], bins=50, ls='-', lw=1.5)
 
     # format plot
     chi_b_lim = ax_chibalpha[0].get_ylim()[1] + 50
@@ -319,8 +326,8 @@ def make_1D_result_continuous(filenames, second_files=None, figure_name='Continu
     ax_chibalpha[0].vlines(_chi_b, ax_chibalpha[0].get_ylim()[0], chi_b_lim, color='black', alpha=0.5)
     ax_chibalpha[1].vlines(_alpha_CE, ax_chibalpha[1].get_ylim()[0], alpha_CE_lim, color='black', alpha=0.5)
     #plot alpha_CE prior
-    """ax_chibalpha[1].hist(beta_p0[:,cidx], \
-                histtype='step', color='grey', bins=20, alpha=0.7, density=True)"""
+    ax_chibalpha[1].hist(alpha_CE_p0, \
+                histtype='step', color='grey', bins=20, alpha=0.7, density=True)
 
     ax_chibalpha[0].autoscale(tight=True, axis='y')
     ax_chibalpha[1].autoscale(tight=True, axis='y')
@@ -329,37 +336,33 @@ def make_1D_result_continuous(filenames, second_files=None, figure_name='Continu
     ax_chibalpha[0].set_ylabel('p('+_labels_dict['chi_b']+')')
     ax_chibalpha[1].set_ylabel('p('+_labels_dict['alpha_CE']+')')
 
-    for i, ax_marg in enumerate(np.append(ax_chibalpha,ax_margs).flatten()):
+    for axes, label, samples in zip([ax_margs,ax_margs_det], [_channel_label,_channel_label_det], sample_sets):
+        for i, ax_marg in enumerate(np.append(ax_chibalpha, axes).flatten()):
 
-        #median branching fractions
-        q_mid = np.percentile(samples_allchains[:, i], 50)
-        q_m = q_mid - np.percentile(samples_allchains[:, i], 5)
-        q_p = np.percentile(samples_allchains[:, i], 95) - q_mid
+            #median branching fractions
+            q_mid = np.percentile(samples[:, i], 50)
+            q_m = q_mid - np.percentile(samples[:, i], 5)
+            q_p = np.percentile(samples[:, i], 95) - q_mid
 
-        title_fmt=".2f"
-        fmt = "{{0:{0}}}".format(title_fmt).format
-        title = r"${{{0}}}_{{-{1}}}^{{+{2}}}$"
-        title = title.format(fmt(q_mid), fmt(q_m), fmt(q_p))
-        ax_marg.set_yscale('log')
-        ax_marg.set_title(fr'${title}$')
+            title_fmt=".2f"
+            fmt = "{{0:{0}}}".format(title_fmt).format
+            title = r"${{{0}}}_{{-{1}}}^{{+{2}}}$"
+            title = title.format(fmt(q_mid), fmt(q_m), fmt(q_p))
+            ax_marg.set_yscale('log')
+            ax_marg.set_title(fr'${title}$')
 
-    for cidx, channel in enumerate(channels):
+        for cidx, channel in enumerate(channels):
+            #plot prior
+            h, bins, _ = axes[cidx].hist(beta_p0[:,cidx], \
+                    histtype='step', color='grey', bins=20, alpha=0.7, density=True)
 
-        #plot prior
-        h, bins, _ = ax_margs[cidx].hist(beta_p0[:,cidx], \
-                histtype='step', color='grey', bins=20, alpha=0.7, density=True)
+            axes[cidx].set_xlabel(label[cidx])
 
-        ax_margs[cidx].set_xlabel(_channel_label[cidx])
-
-        ax_margs[cidx].set_xlim(0,1)
-        if cidx == 0:
-            ax_margs[cidx].set_ylabel(r"p($\beta$)")
-        else:
-            ax_margs[cidx].tick_params(labelleft=False)
-    if detectable:
-        subfigs[0].delaxes(ax_chibalpha[0])
-        subfigs[0].delaxes(ax_chibalpha[1])
-        fig.sca(subfigs[1])
+            axes[cidx].set_xlim(0,1)
+            if cidx == 0:
+                axes[cidx].set_ylabel(r"p($\beta$)")
+            else:
+                axes[cidx].tick_params(labelleft=False)
     plt.savefig(f"{outdir}/pdfs/{figure_name}_flowKDE_infresults.pdf")
 
 def save_detectable_betas(filenames, analysis_name, outdir=_basepath):
@@ -370,7 +373,7 @@ def save_detectable_betas(filenames, analysis_name, outdir=_basepath):
     channels =['CE', 'CHE', 'GC', 'NSC', 'SMT']
 
     #initialise flows
-    model_names, flow = get_models(_models_path, channels, params, use_flows=True, device='cpu', sensitivity='midhighlatelow')
+    model_names, flow = get_models(_models_path, channels, params, use_flows=True, device='cpu', sensitivity='midhighlatelow_network')
 
     #read all samples
     samples_allchains = load_result_samps(filenames)
@@ -404,9 +407,9 @@ def calc_llh_ratio_CE(flow_dir, outdir=_basepath):
     popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
 
     model_names, flow = get_models(_models_path, [channel_label], _params, use_flows=True, \
-         detectable=False, senseitivity='midhighlatelow', flow_path=flow_dir, device='cpu')
+         detectable=False, senseitivity='midhighlatelow_network', flow_path=flow_dir, device='cpu')
     model_names, KDE_models = get_models(_models_path, [channel_label], _params, use_flows=False, normalize=False,\
-         detectable=False, senseitivity='midhighlatelow')
+         detectable=False, senseitivity='midhighlatelow_network')
 
     hyperparams = list(set([x.split('/', 1)[1] for x in model_names]))
     Nhyper = np.max([len(x.split('/')) for x in hyperparams])
@@ -510,4 +513,114 @@ def plot_llh_ratio_CE(flow_dir, outdir, justplot=False):
 
     fig.tight_layout(pad=1.3)
     fig.savefig(f'{outdir}/pdfs/CE2Dmchirpq_llhratio.pdf')
+
+def save_dataspace_samps(filenames, flow_dir, outdir=_basepath):
+    channels = _channels
+    params=_params
+
+    print('loading results samples')
+    hyper_posts = load_result_samps(filenames, discrete_result=False)
+
+    print('loading flows')
+    model_names, flow = get_models(_models_path, channels, _params, use_flows=True, device='cpu',\
+     sensitivity='midhighlatelow_network', flow_path=flow_dir)
+    for channel in channels:
+        flow[channel].load_model(flow_dir, device='cpu')   
+
+    print('sampling over marginalised hyperparameters')
+    #Marginalising over hyperposterior samples
+    no_total_samps = 1000000
+    samps_per_hyperposts = 10
+    no_hypersamps = int(no_total_samps/samps_per_hyperposts)
+
+    samps_filled = np.zeros(6, dtype=int)
+    channel_samps = [[],[],[],[],[]]
+
+    for i, hyperpost_idx in enumerate(tqdm(np.random.choice(np.arange(np.shape(hyper_posts)[0]), no_hypersamps, replace=False))):
+        hyperpost_samp = hyper_posts[hyperpost_idx,:]
+
+        #evauluate channel as weighted choice according to branching fractions
+        channel_idx = np.random.choice(np.arange(len(channels)), p=hyperpost_samp[2:])
+        channel = channels[channel_idx]
+
+        #sample flow
+        if channel == 'CE':
+            hyperpost_samp[1] = np.log(hyperpost_samp[1])
+            samps = flow[channel].flow.sample(np.array([hyperpost_samp[:2]]), samps_per_hyperposts)
+        else:
+            samps = flow[channel].flow.sample(np.array([hyperpost_samp[:1]]), samps_per_hyperposts)
+
+        samps[:,0] = flow[channel].expistic(samps[:,0], flow[channel].mappings[0], flow[channel].mappings[1])
+        samps[:,1] = flow[channel].expistic(samps[:,1], flow[channel].mappings[2])
+        samps[:,2] = np.tanh(samps[:,2])
+        samps[:,3] = flow[channel].expistic(samps[:,3], flow[channel].mappings[4], flow[channel].mappings[5])
+        
+        channel_samps[channel_idx].append(samps)
+
+    #evaluate the cumulative sum of samples with each channel
+    no_channel_samps = [np.shape(channel_samps[chnl])[0] for chnl in np.arange(len(channels))]
+    samps_filled[:5] = np.cumsum(no_channel_samps, axis=0)*samps_per_hyperposts
+
+    #ordering total samples by channel
+    total_samps_ordered = np.zeros((no_total_samps, len(params)))
+    for cidx in range(len(channels)):
+        channel_samps_red = np.reshape(np.array(channel_samps[cidx]),(-1,len(params)))
+        total_samps_ordered[samps_filled[cidx-1]:samps_filled[cidx],:] = channel_samps_red
+    
+    np.save(f'{outdir}/data/flow_samps_dataspace.npy', total_samps_ordered)
+    np.save(f'{outdir}/data/no_channelsamps_dataspace.npy', samps_filled)
+
+def plot_samps_dataspace(filenames=None, flow_dir=None, outdir=_basepath, justplot=True):
+    channels=_channels
+    params=_params
+    
+    if justplot==False:
+        save_dataspace_samps(filenames, flow_dir, outdir=outdir)
+    total_samps_ordered = np.load(f"{outdir}/data/flow_samps_dataspace.npy")
+    samps_filled = np.load(f'{outdir}/data/no_channelsamps_dataspace.npy')
+
+    plt.rcParams["figure.figsize"] = (figure_width*2,figure_width*2/3)
+    fig,ax=plt.subplots(1,4)
+    cmap = plt.colormaps['plasma']
+    colors = cmap(np.linspace(0, 1, 6))
+
+    print('loading parametric samples')
+    comb_intrins_samps = pd.read_hdf('/data/wiay/2297403c/GW_ChirpSim/binary_param_generation/60_intrins_samps_zmax1_35.hdf5', key='all_intrins_samps')
+    mchirp_samps = comb_intrins_samps['m1']*(comb_intrins_samps['q']**3/(1+comb_intrins_samps['q']))
+    chieff_samps = ((comb_intrins_samps['chi_1']*comb_intrins_samps['costilt_1'])+(comb_intrins_samps['q']*comb_intrins_samps['chi_2']*comb_intrins_samps['costilt_2']))\
+    /(1+comb_intrins_samps['q'])
+
+    no_total_samps = np.shape(total_samps_ordered)[0]
+    PLPP_samps = [mchirp_samps, comb_intrins_samps['q'], chieff_samps, comb_intrins_samps['z']]
+    no_bins=50
+    bins =np.array([np.linspace(_param_bounds[pidx][0],_param_bounds[pidx][1],no_bins) for pidx in params])
+    ax_ylims = [0.6*no_total_samps,0.2*no_total_samps,0.6*no_total_samps,0.12*no_total_samps]
+    mask_min = [np.min(total_samps_ordered[:,0]), 0,-1,0]
+    mask_max = [100, 1,1,1.35]
+
+    for cidx, channel in enumerate(channels):
+        for pidx,param in enumerate(params):
+            ax[pidx].hist(total_samps_ordered[samps_filled[cidx-1]:samps_filled[cidx],pidx], color=colors[cidx], histtype='step', bins=bins[pidx], lw=1,\
+                label=channel)
+
+    for pidx,param in enumerate(params):
+        ax[pidx].hist(total_samps_ordered[:,pidx], color='black', histtype='step', bins=bins[pidx], lw=1, ls='-', label='Total', alpha=.7)
+        mask = np.logical_and(mask_min[pidx]<total_samps_ordered[:,pidx],total_samps_ordered[:,pidx]<mask_max[pidx])
+        ax[pidx].hist(PLPP_samps[pidx], color='deeppink', histtype='step',\
+            weights=np.ones_like(PLPP_samps[pidx])*len(total_samps_ordered[mask,pidx])/len(PLPP_samps[pidx]),\
+            bins=bins[pidx], lw=1, ls='-', label='Parametric', alpha=0.7, zorder=-100)
+        ax[pidx].set_yscale('log')
+        ax[pidx].set_xlabel(_labels_dict[param])
+        ax[pidx].set_ylim(5,ax_ylims[0])
+        ax[pidx].set_xlim(_param_bounds[param][0],_param_bounds[param][1])
+        if pidx>0:
+            ax[pidx].tick_params(labelleft=False)
+    ax[0].set_ylabel('No. samples')
+    plt.legend(loc='lower center', bbox_to_anchor=(-1.4, 1.02), ncol=7, columnspacing=1.)
+    fig.subplots_adjust( left=None, bottom=None,  right=None, top=None, wspace=None, hspace=None)
+    fig.tight_layout(pad=1.3)
+    fig.savefig(f'{outdir}/pdfs/1D_dataspace_samps_marg.pdf')
+
+
+
 
