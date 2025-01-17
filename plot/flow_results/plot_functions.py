@@ -75,7 +75,7 @@ _base_corner_kwargs = dict(
     labels=_param_label,
 )
 
-def load_result_samps(filenames, discrete_result=False, Nhyper=2, Nchannels=5, detectable=False):
+def load_result_samps(filenames, Nhyper=2, Nchannels=5, detectable=False):
     """
     Loads hyperposterior samples from like of hdf5 files
     filenames : list, array
@@ -85,6 +85,7 @@ def load_result_samps(filenames, discrete_result=False, Nhyper=2, Nchannels=5, d
         try:
             result = h5py.File(filename, 'r')
         except:
+            print('file not found')
             continue
         if detectable:
             result_key = 'detectable_samples'
@@ -212,6 +213,7 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
     Nhyper =2
     _concentration = np.ones(len(channels))
     beta_p0 =  dirichlet.rvs(_concentration, size=100000)
+    beta_bins = np.linspace(0,1,45)
 
     fig, ax_margs = plt.subplots(2,5, gridspec_kw={'wspace': 0.22, 'hspace': 0.5})
     fig.tight_layout(h_pad=3, w_pad=0.05)
@@ -232,19 +234,19 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
             for cidx, channel in enumerate(channels):
                 factor = 50/(len(samples_allchains[:, cidx+Nhyper]))
                 h, bins, _ = ax_margs[hyper_idx,cidx].hist(samples_allchains[smdl_locs, cidx+Nhyper], \
-                    histtype='step', color=cp[midx], bins=50, ls='-', lw=1.5, \
+                    histtype='step', color=cp[midx], bins=beta_bins, ls='-', lw=1.2, \
                     label=_labels_dict[model],\
                     weights=factor*np.ones_like(samples_allchains[smdl_locs, cidx+Nhyper]))
                 if second_files:
                     factor_comp = 50/(len(samples_allchains_comp[:, cidx+Nhyper]))
                     h, bins, _ = ax_margs[hyper_idx,cidx].hist(samples_allchains_comp[comp_smdl_locs, cidx+Nhyper], \
-                        histtype='stepfilled', color=cp[midx], bins=50, \
-                        alpha=0.3, \
+                        histtype='stepfilled', color=cp[midx], bins=beta_bins, \
+                        alpha=0.4, \
                         #label=_labels_dict[model]+labels[1],\
                         weights=factor_comp*np.ones_like(samples_allchains_comp[comp_smdl_locs, cidx+Nhyper]))
                     h, bins, _ = ax_margs[hyper_idx,cidx].hist(samples_allchains_comp[comp_smdl_locs, cidx+Nhyper], \
-                        histtype='step', color=cp[midx], bins=50, \
-                        alpha=0.7, weights=factor_comp*np.ones_like(samples_allchains_comp[comp_smdl_locs, cidx+Nhyper]))
+                        histtype='step', color=cp[midx], bins=beta_bins, \
+                        alpha=0.0, weights=factor_comp*np.ones_like(samples_allchains_comp[comp_smdl_locs, cidx+Nhyper]))
 
         # format plot
         for cidx, (channel, ax_marg) in enumerate(zip(channels, ax_margs.T)):
@@ -259,15 +261,15 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
             h, bins, _ = ax_marg[hyper_idx].hist(beta_p0[:,cidx], \
                     histtype='step', color='grey', bins=20, alpha=0.7, density=True)
             #plot total BF
-            h, bins, _ = ax_marg[hyper_idx].hist(samples_allchains[:, cidx+Nhyper], \
-                    histtype='step', color='black', bins=50, ls='--', lw=1.0, \
-                    alpha=0.7, density=True)
+            """h, bins, _ = ax_marg[hyper_idx].hist(samples_allchains[:, cidx+Nhyper], \
+                    histtype='step', color='black', bins=beta_bins, ls='--', lw=1.0, \
+                    alpha=0.7, density=True)"""
 
             ax_marg[1].set_xlabel(_channel_label[cidx])
             ax_marg[hyper_idx].set_yscale('log')
 
             ax_marg[hyper_idx].set_xlim(0,1)
-            ax_marg[hyper_idx].set_ylim(int(1e-3),20)
+            ax_marg[hyper_idx].set_ylim(int(1e-3),80)
             if cidx == 0:
                 ax_marg[hyper_idx].set_ylabel(r"p($\beta$)")
             else:
@@ -294,30 +296,39 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
     if detectable==False:
         plt.rcParams['figure.figsize'] = [figure_width*2, figure_width]
         subfigs = fig.subfigures(2, 1, height_ratios=[1.,1.])
+        ax_chibalpha = subfigs[0].subplots(1, 2)
+        ax_margs = subfigs[1].subplots(1, 5)
+        ax_margs_set = [ax_margs]
+        channel_labels = [_channel_label]
     else:
         plt.rcParams['figure.figsize'] = [figure_width*2, figure_width*1.5]
         subfigs = fig.subfigures(3, 1, height_ratios=[1.,1., 1.])
         ax_margs_det = subfigs[2].subplots(1, 5)
-    ax_chibalpha = subfigs[0].subplots(1, 2)
-    ax_margs = subfigs[1].subplots(1, 5)
+        ax_chibalpha = subfigs[0].subplots(1, 2)
+        ax_margs = subfigs[1].subplots(1, 5)
+        ax_margs_set = [ax_margs, ax_margs_det]
+        channel_labels = [_channel_label,_channel_label_det]
+
 
     #add together samples from multiple files
     samples_allchains = load_result_samps(filenames, detectable=False)
+    sample_sets = np.array([samples_allchains])
     if detectable:
-        samples_allchains_detectable = load_result_samps(filenames_det, detectable=True)
+        samples_allchains_detectable = load_result_samps([filenames_det], detectable=True)
+        sample_sets = [samples_allchains, samples_allchains_detectable]
 
-    sample_sets = np.array([samps for samps in [samples_allchains, samples_allchains_detectable] if len(samps)>0])
+    #sample_sets = np.array([samps for samps in [samples_allchains, samples_allchains_detectable] if len(samps)>0])
 
     #plot posteriors on chi_b and alpha_CE
     h, bins, _ = ax_chibalpha[0].hist(samples_allchains[:, 0], density=True,\
-        histtype='step', color=colors[0], bins=50, ls='-', lw=1.5)
+        histtype='step', color=colors[0], bins=np.linspace(0,0.5,80), ls='-', lw=1.5)
     h, bins, _ = ax_chibalpha[1].hist(samples_allchains[:, 1], density=True,\
-        histtype='step', color=colors[0], bins=50, ls='-', lw=1.5)
+        histtype='step', color=colors[0], bins=np.linspace(0,5.,50), ls='-', lw=1.5)
 
-    for i, (samples,axes) in enumerate(zip(sample_sets, [ax_margs, ax_margs_det])):
+    for i, (samples,axes) in enumerate(zip(sample_sets, ax_margs_set)):
         for cidx, channel in enumerate(channels):
             h, bins, _ = axes[cidx].hist(samples[:,cidx+Nhyper], density=True,\
-                histtype='step', color=colors[0], bins=50, ls='-', lw=1.5)
+                histtype='step', color=colors[0], bins=np.linspace(0,1.,45), ls='-', lw=1.5)
 
     # format plot
     chi_b_lim = ax_chibalpha[0].get_ylim()[1] + 50
@@ -333,10 +344,16 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
     ax_chibalpha[1].autoscale(tight=True, axis='y')
     ax_chibalpha[0].set_xlabel(_labels_dict['chi_b'])
     ax_chibalpha[1].set_xlabel(_labels_dict['alpha_CE'])
+    #ax_chibalpha[1].set_xscale('log')
     ax_chibalpha[0].set_ylabel('p('+_labels_dict['chi_b']+')')
     ax_chibalpha[1].set_ylabel('p('+_labels_dict['alpha_CE']+')')
 
-    for axes, label, samples in zip([ax_margs,ax_margs_det], [_channel_label,_channel_label_det], sample_sets):
+    for cidx, channel in enumerate(channels):
+            #plot prior
+            h, bins, _ = ax_margs[cidx].hist(beta_p0[:,cidx], \
+                    histtype='step', color='grey', bins=20, alpha=0.7, density=True)
+
+    for axes, label, samples in zip(ax_margs_set, channel_labels, sample_sets):
         for i, ax_marg in enumerate(np.append(ax_chibalpha, axes).flatten()):
 
             #median branching fractions
@@ -351,18 +368,14 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
             ax_marg.set_yscale('log')
             ax_marg.set_title(fr'${title}$')
 
-        for cidx, channel in enumerate(channels):
-            #plot prior
-            h, bins, _ = axes[cidx].hist(beta_p0[:,cidx], \
-                    histtype='step', color='grey', bins=20, alpha=0.7, density=True)
-
-            axes[cidx].set_xlabel(label[cidx])
-
-            axes[cidx].set_xlim(0,1)
-            if cidx == 0:
-                axes[cidx].set_ylabel(r"p($\beta$)")
-            else:
-                axes[cidx].tick_params(labelleft=False)
+            for cidx, channel in enumerate(channels):
+                axes[cidx].set_xlabel(label[cidx])
+                axes[cidx].set_xlim(0,1)
+                if cidx == 0:
+                    axes[cidx].set_ylabel(r"p($\beta$)")
+                else:
+                    axes[cidx].tick_params(labelleft=False)
+    
     plt.savefig(f"{outdir}/pdfs/{figure_name}_flowKDE_infresults.pdf")
 
 def save_detectable_betas(filenames, analysis_name, outdir=_basepath):
@@ -377,7 +390,6 @@ def save_detectable_betas(filenames, analysis_name, outdir=_basepath):
 
     #read all samples
     samples_allchains = load_result_samps(filenames)
-    
     converted_betas = np.zeros((samples_allchains[:,2:].shape[0], samples_allchains[:,2:].shape[1]))
         
     alphas = np.zeros((samples_allchains.shape[0], len(channels)))
@@ -386,7 +398,7 @@ def save_detectable_betas(filenames, analysis_name, outdir=_basepath):
         for cidx, chnl in enumerate(channels):
             smdl = flow[chnl]
             if chnl == 'CE':
-                alphas[i, cidx] = smdl.get_alpha(samp[:2])
+                alphas[i, cidx] = smdl.get_alpha([samp[:2]])
             else:
                 alphas[i, cidx] = smdl.get_alpha([samp[:1][0], 1.])
 
@@ -397,6 +409,8 @@ def save_detectable_betas(filenames, analysis_name, outdir=_basepath):
     columns = ['p0','p1']
     for channel in channels:
         columns.append('beta_'+channel)
+    
+    print('saving detectable betas...')
         
     df = pd.DataFrame(np.hstack([samples_allchains[:,:2],converted_betas]), columns=columns)
     df.to_hdf(f'{outdir}/data/{analysis_name}_detectable_betas.hdf5', key='model_selection/detectable_samples')
@@ -482,15 +496,17 @@ def plot_llh_ratio_CE(flow_dir, outdir, justplot=False):
     alpha_id = 4
     
     fig, ax = plt.subplots(2,1)
-    cbar_scales =[90,4]
+    #cbar_scales = [50,2]
 
     for row, ratio in enumerate([llh_ratio_kde_flow_unreg, llh_ratio_kde_flow_reg]):
+        #cbar_scale= cbar_scales[row]
+        cbar_scale = np.max(np.abs(ratio))
         c = ax[row].imshow(np.swapaxes(ratio, 0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower',\
-            vmin=-cbar_scales[row], vmax=cbar_scales[row], aspect='auto', cmap='RdBu')
+            vmin=-cbar_scale, vmax=cbar_scale, aspect='auto', cmap='RdBu')
         cbar = fig.colorbar(c, ax=ax[row], cmap='RdBu')
         cbar.set_label(r'log$_{10}$ (p$_\mathrm{flow}/$p$_\mathrm{KDE}$)')
 
-        ax[row].set_ylabel({_labels_dict['q']})
+        ax[row].set_ylabel(_labels_dict['q'])
 
         bin_width = 0.05
         chieffs = popsynth_outputs[(chi_b_id,alpha_id)][:]['chieff']
@@ -500,15 +516,17 @@ def plot_llh_ratio_CE(flow_dir, outdir, justplot=False):
         bin_conditions = np.logical_and(bin_chieff, bin_z)
 
         c = ax[row].imshow(np.swapaxes(ratio,0,1), extent=(mchirps[0], mchirps[-1], qs[0], qs[-1]), origin='lower',\
-            vmin=-cbar_scales[row], vmax=cbar_scales[row], aspect='auto', zorder=-200, cmap='RdBu')
+            vmin=-cbar_scale, vmax=cbar_scale, aspect='auto', zorder=-200, cmap='RdBu')
 
         corner.hist2d(np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['mchirp']),\
-            np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['q']), bins =16, levels=(1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-4.5)), \
-            weights=np.array(weights_dict[(chi_b_id,alpha_id)][bin_conditions]), pcolor_kwargs=dict(alpha=0.0), density=True, ax=ax[row], no_fill_contours=True,\
+            np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['q']), bins =16, \
+            levels=(.50, .90, .99), \
+            weights=np.array(weights_dict[(chi_b_id,alpha_id)][bin_conditions]), \
+            pcolor_kwargs=dict(alpha=0.0), density=True, ax=ax[row], no_fill_contours=True,\
             plot_datapoints=False)
         ax[row].set_xlim(mchirps[0], mchirps[-1])
         ax[row].set_ylim(qs[0], qs[-1])
-        ax[1].set_xlabel({_labels_dict['mchirp']})
+        ax[1].set_xlabel(_labels_dict['mchirp'])
 
 
     fig.tight_layout(pad=1.3)
