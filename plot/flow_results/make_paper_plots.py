@@ -19,6 +19,7 @@ argp.add_argument("--plot-discrete-result", action="store_true", help="True if p
 argp.add_argument("--plot-cont-result", action="store_true", help="True if plotting continuous result. Default=False.")
 argp.add_argument("--plot-flow-corner", action="store_true", help="True if plotting flow model corner plots. Default=False.")
 argp.add_argument("--plot-llh-ratio", action="store_true", help="True if plotting flow KDE log likelihood ratio plot. Default=False.")
+argp.add_argument("--plot-dataspace-result", action="store_true", help="True if plotting flow KDE log likelihood ratio plot. Default=False.")
 argp.add_argument("--save-det-betas", action="store_true", help="True if saving hdf files of converted branching fractions. Default=None.")
 argp.add_argument("--discrete-result-path", type=str, default=None, help="Directory from where to load discrete result files. Default=None.")
 argp.add_argument("--cont-result-path", type=str, default=None, help="Directory from where to load continuous inference result files. Default=None.")
@@ -57,7 +58,7 @@ if args.plot_discrete_result:
     discrete_result_files = glob.glob(f'{discrete_result_path}/*.hdf5')
     try:
         KDE_result_files = glob.glob(f'{discrete_result_path_KDE}/*.hdf5')
-        make_1D_result_discrete(discrete_result_files, second_files=KDE_result_files, labels = [' flow', ' KDE'], figure_name='DiscreteKDE', outdir=outdir)
+        make_1D_result_discrete(discrete_result_files, second_files=KDE_result_files, labels = [' flow', ' KDE'], figure_name='Discrete_allKDE', outdir=outdir)
     except FileNotFoundError():
         make_1D_result_discrete(discrete_result_files, second_files=None, labels = [' flow', None], figure_name='Discrete', outdir=outdir)
 
@@ -68,6 +69,7 @@ if args.plot_cont_result:
     cont_result_files = glob.glob(f'{cont_result_path}/*.hdf5')
     make_1D_result_continuous(cont_result_files, filenames_det=filenames_det, outdir=outdir, detectable=True)
 
+if args.plot_dataspace_result:
     #plot dataspace result
     cont_result_files = glob.glob(f'{cont_result_path}/*.hdf5')
     plot_samps_dataspace(cont_result_files, flow_dir, outdir, justplot)

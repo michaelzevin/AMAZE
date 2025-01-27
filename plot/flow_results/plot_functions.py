@@ -50,7 +50,7 @@ _Nsamps = 100000
 _channel_label =[r'$\beta_{\mathrm{CE}}$',r'$\beta_{\mathrm{CHE}}$',r'$\beta_{\mathrm{GC}}$',r'$\beta_{\mathrm{NSC}}$',r'$\beta_{\mathrm{SMT}}$']
 _channel_label_det =[r'$\beta_{\mathrm{CE}}^{\mathrm{det}}$',r'$\beta_{\mathrm{CHE}}^{\mathrm{det}}$',r'$\beta_{\mathrm{GC}}^{\mathrm{det}}$',\
     r'$\beta_{\mathrm{NSC}}^{\mathrm{det}}$',r'$\beta_{\mathrm{SMT}}^{\mathrm{det}}$']
-
+_beta_det_label = r'$p(\beta^{\mathrm{det}})$'
 
 _models_path ='/data/wiay/2297403c/models_reduced.hdf5'
 
@@ -219,9 +219,9 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
     fig.tight_layout(h_pad=3, w_pad=0.05)
 
     #add together samples from multiple files
-    samples_allchains = load_result_samps(filenames, discrete_result=True)
+    samples_allchains = load_result_samps(filenames)
     if second_files:
-        samples_allchains_comp = load_result_samps(second_files, discrete_result=True)
+        samples_allchains_comp = load_result_samps(second_files)
 
     #loop over astrophysical parameters
     for hyper_idx in [0, 1]:
@@ -269,7 +269,7 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
             ax_marg[hyper_idx].set_yscale('log')
 
             ax_marg[hyper_idx].set_xlim(0,1)
-            ax_marg[hyper_idx].set_ylim(int(1e-3),80)
+            ax_marg[hyper_idx].set_ylim(1e-4,80)
             if cidx == 0:
                 ax_marg[hyper_idx].set_ylabel(r"p($\beta$)")
             else:
@@ -290,6 +290,7 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
     _concentration = np.ones(len(channels))
     beta_p0 =  dirichlet.rvs(_concentration, size=100000)
     alpha_CE_p0 =  loguniform.rvs(_alpha_CE[0], _alpha_CE[-1], size=100000)
+    chib_p0 =  np.random.uniform(0, 0.5, size=100000)
     Nhyper =2
 
     fig = plt.figure(layout='constrained')
@@ -311,7 +312,7 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
 
 
     #add together samples from multiple files
-    samples_allchains = load_result_samps(filenames, detectable=False)
+    samples_allchains = load_result_samps(filenames)
     sample_sets = np.array([samples_allchains])
     if detectable:
         samples_allchains_detectable = load_result_samps([filenames_det], detectable=True)
@@ -335,10 +336,13 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
     alpha_CE_lim = ax_chibalpha[1].get_ylim()[1] +2
     #plot training lines
     ax_chibalpha[0].vlines(_chi_b, ax_chibalpha[0].get_ylim()[0], chi_b_lim, color='black', alpha=0.5)
+    #plot chib prior
+    ax_chibalpha[0].hist(chib_p0, \
+                histtype='step', color='grey', bins=1, alpha=0.7, density=True, zorder=-1000)
     ax_chibalpha[1].vlines(_alpha_CE, ax_chibalpha[1].get_ylim()[0], alpha_CE_lim, color='black', alpha=0.5)
     #plot alpha_CE prior
     ax_chibalpha[1].hist(alpha_CE_p0, \
-                histtype='step', color='grey', bins=20, alpha=0.7, density=True)
+                histtype='step', color='grey', bins=20, alpha=0.7, density=True, zorder=-1000)
 
     ax_chibalpha[0].autoscale(tight=True, axis='y')
     ax_chibalpha[1].autoscale(tight=True, axis='y')
@@ -351,7 +355,7 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
     for cidx, channel in enumerate(channels):
             #plot prior
             h, bins, _ = ax_margs[cidx].hist(beta_p0[:,cidx], \
-                    histtype='step', color='grey', bins=20, alpha=0.7, density=True)
+                    histtype='step', color='grey', bins=20, alpha=0.7, density=True, zorder=-1000)
 
     for axes, label, samples in zip(ax_margs_set, channel_labels, sample_sets):
         for i, ax_marg in enumerate(np.append(ax_chibalpha, axes).flatten()):
@@ -366,13 +370,18 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
             title = r"${{{0}}}_{{-{1}}}^{{+{2}}}$"
             title = title.format(fmt(q_mid), fmt(q_m), fmt(q_p))
             ax_marg.set_yscale('log')
-            ax_marg.set_title(fr'${title}$')
+            #ax_marg.set_title(fr'${title}$')
 
             for cidx, channel in enumerate(channels):
                 axes[cidx].set_xlabel(label[cidx])
                 axes[cidx].set_xlim(0,1)
+                ax_margs_set[0][cidx].set_ylim(1e-4,80)
+                ax_margs_set[1][cidx].set_ylim(1e-4,15)
+                axes[cidx].get_yaxis().set_tick_params(which='minor', size=0)
+                #axes[cidx].set_yticks([1e-1,1e1])
                 if cidx == 0:
-                    axes[cidx].set_ylabel(r"p($\beta$)")
+                    ax_margs_set[0][cidx].set_ylabel(r"p($\beta$)")
+                    ax_margs_set[1][cidx].set_ylabel(r'$p(\beta^{\mathrm{det}})$')
                 else:
                     axes[cidx].tick_params(labelleft=False)
     
@@ -398,7 +407,8 @@ def save_detectable_betas(filenames, analysis_name, outdir=_basepath):
         for cidx, chnl in enumerate(channels):
             smdl = flow[chnl]
             if chnl == 'CE':
-                alphas[i, cidx] = smdl.get_alpha([samp[:2]])
+                #needs to be log alphaCE!
+                alphas[i, cidx] = smdl.get_alpha([[samp[0], np.log(samp[1])]])
             else:
                 alphas[i, cidx] = smdl.get_alpha([samp[:1][0], 1.])
 
@@ -521,7 +531,7 @@ def plot_llh_ratio_CE(flow_dir, outdir, justplot=False):
         corner.hist2d(np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['mchirp']),\
             np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['q']), bins =16, \
             levels=(.50, .90, .99), \
-            weights=np.array(weights_dict[(chi_b_id,alpha_id)][bin_conditions]), \
+            weights=np.array(weights_dict[(chi_b_id,alpha_id)][bin_conditions]), contour_kwargs=dict(lw=1.0), \
             pcolor_kwargs=dict(alpha=0.0), density=True, ax=ax[row], no_fill_contours=True,\
             plot_datapoints=False)
         ax[row].set_xlim(mchirps[0], mchirps[-1])
@@ -537,7 +547,7 @@ def save_dataspace_samps(filenames, flow_dir, outdir=_basepath):
     params=_params
 
     print('loading results samples')
-    hyper_posts = load_result_samps(filenames, discrete_result=False)
+    hyper_posts = load_result_samps(filenames)
 
     print('loading flows')
     model_names, flow = get_models(_models_path, channels, _params, use_flows=True, device='cpu',\
