@@ -37,21 +37,23 @@ class NFlow():
         no_trans : int
             number of transforms to give the flow
         no_neurons : int
-            number of neurons to give the flow
+            number of neurons of the flow per layer/transform
         training_inputs : int
             number of parameters in dataspace (binary parameters)
         cond_inputs : int
             number of conditional population hyperparameters
         batch_size : int
-            number of training + validation samples to use in each batch
+            number of training and validation samples to use in each batch
         total_hps : int
-            number of subpopulations
+            total number of subpopulation models
         channel_label : str
             str corresponding to which formation channel this flow is for, e.g. 'CE'
         RNVP : bool
             whether or not to use realNVP flow, if False use spline
         num_bins : int
             number of bins to use for a spline flow
+        device : str
+            device on which to run pytorch operations, default is CPU, otherwise GPU enabled with device = 'cuda:0'
         """
         self.no_params = training_inputs
         self.batch_size = batch_size
@@ -76,15 +78,36 @@ class NFlow():
 
     #training and validation loop for the flow
     def trainval(self, lr, epochs, batch_no, filename, training_data, val_data, use_wandb):
+        """
+        Train the normalising flow for the specified number of epochs, and save the model with the best 
+        validation loss
 
+        Parameters
+        ----------
+        lr : float
+            the initial learning rate used to train the normalising flow, which is then reduced with cosine annealing
+        epochs : int
+            number iterations to train for  - 1 epoch goes through through entire dataset
+        batch_no : int
+            number of batches of data in one iteration
+        filename : str
+            directory and filename of where to save best flow model
+        training_data : array
+            set of training data points for the normlising flow
+        val_data : array
+            set of validation data points for the normlising flow
+        use_wandb : bool
+            If true, uses weights and biases to optimise neural network parameters
+        """
         #set optimiser for flow, optimises flow parameters:
-        #(affine - s and t that shift and scale the transforms)
-        #(spline - nodes used to model the distribution of CDFs)
+        #affine - s and t that shift and scale the transforms
+        #spline - nodes used to model the distribution of CDFs
         optimiser = torch.optim.Adam(self.network.parameters(), lr=lr, weight_decay=0)
+        #set learning rate cheduler
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=epochs, eta_min=0, last_epoch=- 1, verbose=False)
 
-        n_epochs = epochs #number of iterations to train  - 1 epoch goes through through entire dataset
-        n_batches = batch_no #number of batches of data in one iteration
+        n_epochs = epochs
+        n_batches = batch_no 
 
         #initialize best flow model
         best_epoch = 0
@@ -146,6 +169,7 @@ class NFlow():
                     '\r Epoch: {} || Training loss: {} || Validation loss: {}'.format(
                     n+1, train_loss, total_val_loss))
             
+            #track losses for weights and biases
             if use_wandb:
                 wandb.log({"train_loss": train_loss, "val_loss": total_val_loss, "unweighted_train_KL": unweighted_KL_train, "unweighted_val_KL": total_unweighted_KL_val})
 
@@ -164,6 +188,10 @@ class NFlow():
     def plot_history(self,filename):
         """
         Plots losses for training of network
+
+        filename : str
+            directory and filename of where to save loss data and figures
+            alongside best flow model
         """
 
         #loss plot
@@ -188,9 +216,12 @@ class NFlow():
         axins.tick_params(axis='both', labelsize=10)
         text = axins.yaxis.get_offset_text()
         text.set_size(10)
+
+        #save loss data
         plt.savefig(f'{filename}loss.pdf')
         pd.DataFrame.to_csv(pd.DataFrame.from_dict(self.history),f'{filename}_loss_history.csv')
 
+        #plot learning rate
         fig, ax = plt.subplots(figsize = (10,5))
         ax.plot(self.history['lr'], label = 'lr')
         ax.set_ylabel('Learning rate', fontsize=10)
@@ -201,7 +232,7 @@ class NFlow():
 
     def sample(self, conditional,no_samples):
         """
-        Pull samples from flow given one pair of population hyperparameters
+        Pull samples from flow given one pair of population hyperparameters.
 
         Parameters
         ----------
@@ -212,8 +243,8 @@ class NFlow():
         
         Returns
         -------
-        array 
-            [no_samples, self.no_params]
+        samples : array 
+            Flow samples in the logistically-mapped space of shape [no_samples, self.no_params]
         """
         samples = np.zeros((no_samples, self.no_params))
 
@@ -227,18 +258,20 @@ class NFlow():
 
     def get_training_data(self, training_samples):
         """
-        Get random batch training data from self.training_samples
+        Get random batch training data from training_samples
         
         Returns
         -------
         xdata : tensor 
-            [no_samples, self.no_params]
-        x_hyperparams : tensor
-
+            a batch of training data samples of shape [no_samples, self.no_params]
+        xhyperparams : tensor
+            the corersponding conditional hyperparameters to the batch of training data
+            of shape [no_samples, self.cond_inputs]
+        xweights : tensor
+            the corersponding sample weigths to the batch of training data
+            of shape [no_samples]
         """
-        #treatment of separation of training and validation data is different for 2d CE channel than 1d channels
-        #differentiated by size of conditional inputs
-        #2D channel has seperate populations for training and validation data, 1D mixes up samples
+        #batched samples found, depending on the number of conditional samples in each model
         if self.cond_inputs >=2:
             random_samples = np.random.choice(np.shape(training_samples)[0],size=(int(self.batch_size)))
             batched_hp_pairs = training_samples[random_samples,-2:]
@@ -252,7 +285,6 @@ class NFlow():
 
         #reshape tensors
         xdata=torch.from_numpy(batched_samples.astype(np.float32)).to(self.device)
-        #xhyperparams = np.concatenate(batched_hp_pairs)
         xhyperparams = torch.from_numpy(batched_hp_pairs.astype(np.float32)).to(self.device)
         xhyperparams = xhyperparams.reshape(-1,self.cond_inputs)
         xweights = torch.from_numpy(batch_weights.astype(np.float32)).to(self.device)
@@ -265,19 +297,23 @@ class NFlow():
         
         Returns
         -------
-        xdata : tensor 
-            [no_samples, self.no_params]
-        x_hyperparams : tensor
-
+        xval : tensor 
+            a batch of validation data samples of shape [no_samples, self.no_params]
+        xhyperparams : tensor
+            the corersponding conditional hyperparameters to the batch of validation data
+            of shape [no_samples, self.cond_inputs]
+        xweights : tensor
+            the corersponding sample weigths to the batch of validation data
+            of shape [no_samples]
         """
         
-
+        #find weights from validation data
         if self.cond_inputs >=2:
             val_weights = validation_data[:,-3]
         else:
             val_weights = validation_data[:,-2]
 
-        
+        #pull batch from data
         random_samples = np.random.choice(np.shape(validation_data)[0], size=(int(self.batch_size)))
         val_weights = val_weights[random_samples]
         validation_hp_pairs = validation_data[random_samples,-self.cond_inputs:]
@@ -291,12 +327,18 @@ class NFlow():
 
     def load_model(self,filename):
         """
-        Load pre-trained flow from saved model
+        Load pre-trained flow from saved model, and set flow to evaluation mode
         """
         self.network.load_state_dict(torch.load(filename, map_location=torch.device(self.device)))
         self.network.eval()
 
     def log_jacobian(self,sample, mappings):
+        """
+        Calculate the log jacobian term to add to the log likelihood to account for the logistic transforms
+        of the samples of [mchirp, q, chieff, z]
+
+        returns the sum of the log of the absolute value of the jacobian term
+        """
         #dtheta prime by dtheta
         jac = torch.zeros(sample.shape[0], self.no_params).to(self.device)
 
@@ -345,9 +387,6 @@ class NFlow():
         sample = sample.reshape(-1,self.no_params)
         mapped_sample = mapped_sample.reshape(-1,self.no_params)
 
-        #removed 'None' that was stand in for secondary q mapping
-        #mappings=mappings[mappings != None]
-
         with torch.no_grad():
             log_prob = self.network.log_prob(mapped_sample, hyperparams)
             log_prob += self.log_jacobian(sample, mappings)
@@ -363,6 +402,9 @@ class NFlow():
         return log_prob
 
     def get_latent_samps(self, samps, conditionals):
+        """
+        Returns samps of shape [Nsamps, Nparams] mapped to the latent space conditional on conditionals of shape [Nsamps, Nconditionals]
+        """
         
         samps = torch.from_numpy(samps.astype(np.float32))
         conditionals = torch.from_numpy(conditionals.astype(np.float32))

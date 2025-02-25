@@ -108,6 +108,7 @@ else:
 
 
 # see if we're using GW observations
+#using simulated observations currently only supported by KDE inference
 gwobs = True if args.model0=='gwobs' else False
 
 # --- Useful functions for accessing items in KDE dictionary
@@ -117,17 +118,16 @@ def setInDict(dataDict, mapList, value):
     getFromDict(dataDict, mapList[:-1])[mapList[-1]] = value
 
 # --- Load in population models into dictionary structure: models[channel] for flows and models[channel][model] for KDEs
-
-# Construct both "underlying" KDE models (anything that has Pdet>0) and "detectable" KDE models
-# `normalize` argument normalizes KDEs on unit cube
-# Flow models do not support learning the detectable distribution
 params = list(np.asarray(args.params).flatten())
 if use_flows==True:
+    # Flow models do not support learning the detectable distribution
     if verbose:
         print_both(print_file, "\nReading models, applying transformations, and initializing underlying Normalising Flow models...\n")
     model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows, flow_path=args.flow_model_filename,\
             sensitivity=args.sensitivity, device=args.device, detectable=False)
 else:
+    # Construct both "underlying" KDE models (anything that has Pdet>0) and "detectable" KDE models
+    # `normalize` argument normalizes KDEs on unit cube
     if verbose:
         print_both(print_file, "\nReading models, applying transformations, and initializing underlying KDEs...\n")
     model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
@@ -338,6 +338,7 @@ if use_flows==True:
     for i, channel in enumerate(channels):
         if args.train_flows == True:
             if use_wandb == True:
+                #initialise weights and biases for flow network optimisation
                 pop_models[channel].wandb_init(int(args.epochs[i]))
             else:
                 pop_models[channel].train(int(args.no_trans[i]), int(args.spline_bins[i]), int(args.no_neurons[i]), lr[i], \
@@ -387,6 +388,7 @@ if args.random_seed:
     np.random.seed(args.random_seed)
 
 # --- Do the sampling!
+#Here we pass different args is we are doing discrete or continuous sampling of the population model parameters
 if discrete_sample:
     sampler = sample.Sampler(model_names, hyperparam_bounds=[[0, len(hyperparam_dict[0])], [0, len(hyperparam_dict[1])]], likelihood='emcee_lnlike_disc')
 else:
@@ -397,7 +399,7 @@ raw_samples = samples.copy()
 lnprb = sampler.lnprb
 submodels_dict = sampler.submodels_dict
 
-# take the floor of the hyperparameters to get the model indices
+# take the floor of the hyperparameters to get the model indices for discrete sampling
 if discrete_sample:
     for hyper_idx in list(submodels_dict.keys()):
         samples[:,:,hyper_idx] = np.floor(samples[:,:,hyper_idx]).astype(int)

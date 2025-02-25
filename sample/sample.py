@@ -49,7 +49,7 @@ class Sampler(object):
         channels = sorted(list(set([x.split('/')[0] for x in model_names])))
 
         # construct dict that relates submodels to their index number
-        submodels_dict = {} #dummy index dict keys:0,1,2,3, items: particular models
+        submodels_dict = {} #index dict. keys:0,1,2,3, items: particular models
         ctr=0 #associates with either chi_b or alpha (0 or 1)
         while ctr < Nhyper:
             submodels_dict[ctr] = {}
@@ -105,10 +105,24 @@ posteriors!".format(self.posterior_name))
 
         self.hyperparam_bounds = kwargs['hyperparam_bounds'] if 'hyperparam_bounds' in kwargs else _hyperparam_bounds
 
-    #still input flow dictionary
     def sample(self, pop_models, obsdata, use_flows, smallest_N, discrete_sample, prior_pdf, verbose=True):
         """
         Initialize and run the sampler
+
+        pop_models : dict
+            contains the normalising flow or KDE model instances for each channel/population model
+        obsdata : array
+            posterior samples of observations or mock observations for which to calculate the likelihoods,
+            shape[Nobs x Nsample x Nparams]
+        use_flows : bool
+            True if using normalising flows for inference. If False, uses KDEs
+        smallest_N : int
+            Value by which to regularise the population distributions.
+            See eq. 2 in Colloms et al.
+        discrete_sample : bool
+            True if preforming discrete inference (either flows or KDEs). If False, performs continuous inference (flows only)
+        prior_pdf : array
+            Prior value on each GW posterior sample in obsdata
         """
 
         # --- Set up initial point for the walkers
@@ -118,7 +132,7 @@ posteriors!".format(self.posterior_name))
         # first, for the population hyperparameters
         #selects points in uniform prior for chi_b
         p0[:,0] = np.random.uniform(self.hyperparam_bounds[0][0], self.hyperparam_bounds[0][1], size=self.nwalkers)
-        #select log uniform in alphaCE (uniform over alphaCE indices, or loguniform in alphaCE values)
+        #select points in log uniform in alphaCE (uniform over alphaCE indices, or loguniform in alphaCE values)
         if discrete_sample:
             p0[:,1] = np.random.uniform(self.hyperparam_bounds[1][0], self.hyperparam_bounds[1][1], size=self.nwalkers)
         else:
@@ -129,12 +143,15 @@ posteriors!".format(self.posterior_name))
         p0[:,self.Nhyper:] = beta_p0[:,:-1]
 
         # --- Do the sampling
-        posterior_args = [obsdata, pop_models, self.submodels_dict, self.channels, _concentration, use_flows, smallest_N, prior_pdf, self.hyperparam_bounds, discrete_sample] #these are arguments to pass to self.posterior
+        #set arguments to pass to self.posterior
+        posterior_args = [obsdata, pop_models, self.submodels_dict, self.channels, _concentration, use_flows, smallest_N, prior_pdf, self.hyperparam_bounds, discrete_sample]
         if verbose:
             print("Sampling...")
-        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args) #calls emcee sampler with self.posterior as probability function
+        #initialise emcee sampler with self.posterior as probability function
+        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args)
         
-        for idx, result in enumerate(sampler.sample(p0, iterations=self.nsteps)): #running sampler
+        #run sampling
+        for idx, result in enumerate(sampler.sample(p0, iterations=self.nsteps)):
             if verbose:
                 if (idx+1) % (self.nsteps/200) == 0:#progress bar
                     sys.stderr.write("\r  {0}% (N={1})".\
@@ -145,7 +162,8 @@ posteriors!".format(self.posterior_name))
         # remove the burnin -- this removes some hyperpost samples at the start of the run before sampler equilibrates
         burnin_steps = int(self.nsteps * self.fburnin)
         self.Nsteps_final = self.nsteps - burnin_steps
-        samples = sampler.chain[:,burnin_steps:,:] #chain array is number of chain, point in chain, value at that point (says in model_select?)
+        #chain output is of shape [number of chain, point in chain, value at that point]
+        samples = sampler.chain[:,burnin_steps:,:]
         lnprb = sampler.lnprobability[:,burnin_steps:]
 
         # synthesize last betas, since they sum to unity
@@ -163,8 +181,9 @@ posteriors!".format(self.posterior_name))
 def lnp(x, submodels_dict, _concentration, hyperparam_bounds, discrete_sample):
     """
     Log of the prior. 
-    Returns logL of -inf for points outside, uniform within. 
-    Is conditional on the sum of the betas being one.
+    Returns logL of -inf for points outside hyperparam_bounds.
+    Prior is uniform within bounds for chi_b, and uniform over alpha_CE indices, log uniform over alpha_CE values.
+    Dirichlet prior on betas given by _concentraion, conditional on the sum of the betas being one.
     """
     # first get prior on the hyperparameters, flat between the hyperparameter boundaries
     for hyper_idx in list(submodels_dict.keys()):
@@ -185,13 +204,13 @@ def lnp(x, submodels_dict, _concentration, hyperparam_bounds, discrete_sample):
     else:
         alpha_CE_prior = loguniform.logpdf(x[1],a=hyperparam_bounds[1][0], b=hyperparam_bounds[1][1])
 
-    # Dirchlet distribution prior for betas, plus uniform prior on log(alphaCE)
+    # Dirchlet distribution prior for betas, plus uniform prior on log(alphaCE) values
     return dirichlet.logpdf(betas_tmp, _concentration) + alpha_CE_prior
 
 
 def lnlike_cont(x, data, pop_models, submodels_dict, channels, prior_pdf, smallest_N, **kwargs): #data here is obsdata previously, and x is the point in log hyperparam space
     """
-    Log of the likelihood. 
+    Log of the likelihood for continuous model selection, using normalising flows. 
     Selects on model, then tests beta.
 
     x: array
@@ -200,9 +219,21 @@ def lnlike_cont(x, data, pop_models, submodels_dict, channels, prior_pdf, smalle
     data: array
         GW posterior samples or mock observations
         [Nobs x Nsample x Nparams]
-    submodels_dict: dictionary
+    pop_models: dict
+        contains the normalising flow or KDE model instances for each channel/population model
+    submodels_dict: dict
         stores submodels to related to their index number by keys [0 or 1][0,1,2,3,4]
         where first is either chi_b or alpha, and the other is hyperparameter value
+    channels: array/list of str
+        list of formation channels used in inference in form 'CE'
+    prior_pdf : array
+            Prior value on each GW posterior sample in obsdata
+    smallest_N : int
+        Value by which to regularise the population distributions.
+        See eq. 2 in Colloms et al.
+
+    Returns
+        log likelihood summed over events, accounting for detection efficiency
     """
     # get betas
     betas = np.asarray(x[len(submodels_dict):])
@@ -230,7 +261,7 @@ def lnlike_cont(x, data, pop_models, submodels_dict, channels, prior_pdf, smalle
 
 def lnlike_disc(x, data, pop_models, submodels_dict, channels, prior_pdf, use_flows, smallest_N, **kwargs): #data here is obsdata previously, and x is the point in log hyperparam space
     """
-    Log of the likelihood. 
+    Log of the likelihood for discrete model selection, using either normalising flows or KDEs.
     Selects on model, then tests beta.
 
     x: array
@@ -242,6 +273,19 @@ def lnlike_disc(x, data, pop_models, submodels_dict, channels, prior_pdf, use_fl
     submodels_dict: dictionary
         stores submodels to related to their index number by keys [0 or 1][0,1,2,3,4]
         where first is either chi_b or alpha, and the other is hyperparameter value
+    channels: array/list of str
+        list of formation channels used in inference in form 'CE'
+    prior_pdf : array
+            Prior value on each GW posterior sample in obsdata
+    use_flows : bool
+        True if using normalising flows for inference. If False, uses KDEs
+    smallest_N : int
+        Value by which to regularise the population distributions.
+        See eq. 2 in Colloms et al.
+
+    
+    Returns
+        log likelihood summed over events, accounting for detection efficiency
     """
     model_list = []
     hyperparam_idxs = []
@@ -295,10 +339,31 @@ def lnpost(x, data, pop_models, submodels_dict, channels, _concentration, use_fl
 
     x : np array
         walker points in hyperparameters space to sample probability
-    data : np array
+    data : array
         GW observations of shape [Nobs, Nsamps, Nparams]
     pop_models : Dict
         population models represented by either KDEs or Flows
+    submodels_dict: dictionary
+        stores submodels to related to their index number by keys [0 or 1][0,1,2,3,4]
+        where first is either chi_b or alpha, and the other is hyperparameter value
+    channels: array of str
+        list of formation channels used in inference in form 'CE'
+    _concentration: list
+        concentration to use for prior on Betas
+    use_flows : bool
+        True if using normalising flows for inference. If False, uses KDEs
+    smallest_N : int
+        Value by which to regularise the population distributions.
+        See eq. 2 in Colloms et al.
+    prior_pdf : array
+            Prior value on each GW posterior sample in obsdata
+    hyperparam_bounds : array
+        lower and upper limits on the priors for chi_b and alpha_CE or their model indices
+    discrete_sample : bool
+            True if preforming discrete inference (either flows or KDEs). If False, performs continuous inference (flows only)
+    
+    Returns
+        log likelihood plus log prior
     """
     # Prior
     log_prior = lnp(x, submodels_dict, _concentration, hyperparam_bounds, discrete_sample)

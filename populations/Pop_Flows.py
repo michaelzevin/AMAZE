@@ -446,7 +446,7 @@ class FlowModel(Model):
     def __call__(self, data, conditional_hps, smallest_N, prior_pdf=None):
         """
         Calculate the likelihood of the observations give a particular hypermodel (given by conditional_hps).
-        (this is the hyperlikelihood).
+        This is the hyperlikelihood).
 
         Parameters
         ----------
