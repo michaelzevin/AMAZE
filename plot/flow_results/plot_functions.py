@@ -36,7 +36,7 @@ _param_bounds = {"mchirp": (-1.,70), "q": (0.08,1.01), "chieff": (-0.6,1.), "z":
 _param_ticks = {"mchirp": [0,10,20,30,40,50,60,70], "q": [0.25,0.5,0.75,1], "chieff": [-0.5,0,0.5,1], "z": [0,0.25,0.5,0.75,1.0,1.25]}
 _pdf_bounds = {"mchirp": (0,0.075), "q": (0,32), "chieff": (0,17), "z": (0,4)}
 _pdf_ticks = {"mchirp": [0.0,0.025,0.050,0.075], "q": [0,10,20,30], "chieff": [0,4,8,12,16], "z": (0,1,2,3,4)}
-_labels_dict = {"mchirp": r"$\mathcal{M}$ /$M_{\odot}$", "q": r"$q$", \
+_labels_dict = {"mchirp": r"$\mathcal{M}$/$M_{\odot}$", "q": r"$q$", \
 "chieff": r"$\chi_{\rm eff}$", "z": r"$z$", "chi00": r"$\chi_\mathrm{b}=0.0$", \
 "chi01": r"$\chi_\mathrm{b}=0.1$", "chi02": r"$\chi_\mathrm{b}=0.2$", \
 "chi05": r"$\chi_\mathrm{b}=0.5$", "alpha02": r"$\alpha_\mathrm{CE}=0.2$", \
@@ -63,16 +63,17 @@ figure_width = jour_sizes["AAS"]["onecol"]
 
 
 _base_corner_kwargs = dict(
-    bins=64,
+    bins=60,
     smooth=0.9,
     #quantiles=[0.16, 0.84],
-    levels=(1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-9 / 2.0)),
+    levels=(0.5,0.9,0.99),
     plot_density=True,
     plot_datapoints=True,
     fill_contours=True,
     show_titles=False,
     hist_kwargs=dict(density=True),
     labels=_param_label,
+    hist2d_kwargs= dict(data_kwargs=dict(alpha=0.01))
 )
 
 def load_result_samps(filenames, Nhyper=2, Nchannels=5, detectable=False):
@@ -97,7 +98,7 @@ def load_result_samps(filenames, Nhyper=2, Nchannels=5, detectable=False):
 
     return samples_allchains
 
-def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=None, outdir=_basepath):
+def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=None, outdir=_basepath, effectiveNsamps=True, testCE=True):
     
     popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
 
@@ -119,6 +120,17 @@ def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=
 
     weighted_flow.load_model(flow_dir, device='cpu')
 
+    if effectiveNsamps:
+        #determine no. effective samples to draw from flow/KDE
+        models_dict = dict.fromkeys(popsynth_outputs.keys())
+        weights_dict = dict.fromkeys(popsynth_outputs.keys())
+
+        for key in popsynth_outputs.keys():
+            models_dict[key] = popsynth_outputs[key][_params]
+            weights_dict[key]= popsynth_outputs[key]['weight']
+        weights=weights_dict[tuple(KDE_hyperparam_idxs)]
+        _Nsamps = int((np.sum(weights))**2/(np.sum(weights**2)))
+
     #sample flow
 
     print('sampling flow...')
@@ -138,11 +150,15 @@ def sample_pop_corner(flow_dir, channel_label, conditional, KDE_hyperparam_idxs=
         np.save(f"{outdir}/data/{channel_label}_KDEs_cornersample.npy", kde_samples)
         
     print('saving samples...')
-    np.save(f"{outdir}/data/{channel_label}_flows_cornersample.npy", flow_samples_stack)
+    if testCE:
+        np.save(f"{outdir}/data/{channel_label}_flows_cornersample_testCE.npy", flow_samples_stack)
+    else:
+        np.save(f"{outdir}/data/{channel_label}_flows_cornersample.npy", flow_samples_stack)
+
     print('samples saved')
 
 
-def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None, conditional=None, plot_KDE=True, outdir=_basepath):
+def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None, conditional=None, plot_KDE=True, outdir=_basepath, testCE=True):
 
     #get samples from models, either sampling first or loading from file
     if justplot==False:
@@ -151,7 +167,10 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
         pass
     else:
         kde_samples = np.load(f"{outdir}/data/{channel_label}_KDEs_cornersample.npy")
-    flow_samples= np.load(f"{outdir}/data/{channel_label}_flows_cornersample.npy")
+    if testCE:
+        flow_samples= np.load(f"{outdir}/data/{channel_label}_flows_cornersample_testCE.npy")
+    else:
+        flow_samples= np.load(f"{outdir}/data/{channel_label}_flows_cornersample.npy")
 
     #get training population samples
     popsynth_outputs = read_hdf5(_models_path, channel_label) # read all data from hdf5 file
@@ -163,8 +182,8 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
         weights_dict[key]= popsynth_outputs[key]['weight']
 
     #set colours for plot
-    colors=['C1', 'purple', 'royalblue']
-    labels=['Underlying Model', 'KDE', 'Normalising Flow']
+    colors=['C1', 'royalblue', 'royalblue']
+    labels=['Underlying Model', 'Normalising Flow']
 
     model_kwargs = deepcopy(_base_corner_kwargs)
     model_kwargs["color"] = colors[0]
@@ -195,14 +214,17 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
     plt.legend(
             handles=[
                 mlines.Line2D([], [], color=colors[i], label=labels[i])
-                for i in range(3)
+                for i in range(2)
             ],
             frameon=False,
             bbox_to_anchor=(1, 4), loc="upper right"
         )
     #save figure
     fig.set_size_inches(figure_width*2, figure_width*2)
-    plt.savefig(f"{outdir}/pdfs/{channel_label}_flowKDEmodel_corner_chib{hyperparam_idxs[0]}.pdf")
+    if testCE:
+        plt.savefig(f"{outdir}/pdfs/{channel_label}_flowKDEmodel_corner_chib{hyperparam_idxs[0]}testCE.pdf")
+    else:
+        plt.savefig(f"{outdir}/pdfs/{channel_label}_flowKDEmodel_corner_chib{hyperparam_idxs[0]}.pdf")
 
 def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], figure_name='Discrete', outdir=_basepath):
     plt.rcParams['figure.figsize'] = [figure_width*2, figure_width]
@@ -271,7 +293,7 @@ def make_1D_result_discrete(filenames, second_files=None, labels = [None,None], 
             ax_marg[hyper_idx].set_xlim(0,1)
             ax_marg[hyper_idx].set_ylim(1e-4,80)
             if cidx == 0:
-                ax_marg[hyper_idx].set_ylabel(r"p($\beta$)")
+                ax_marg[hyper_idx].set_ylabel(r"$p(\beta)$")
             else:
                 ax_marg[hyper_idx].tick_params(labelleft=False)
         # legend
@@ -349,8 +371,8 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
     ax_chibalpha[0].set_xlabel(_labels_dict['chi_b'])
     ax_chibalpha[1].set_xlabel(_labels_dict['alpha_CE'])
     #ax_chibalpha[1].set_xscale('log')
-    ax_chibalpha[0].set_ylabel('p('+_labels_dict['chi_b']+')')
-    ax_chibalpha[1].set_ylabel('p('+_labels_dict['alpha_CE']+')')
+    ax_chibalpha[0].set_ylabel(r'$p($'+_labels_dict['chi_b']+r'$)$')
+    ax_chibalpha[1].set_ylabel(r'$p($'+_labels_dict['alpha_CE']+r'$)$')
 
     for cidx, channel in enumerate(channels):
             #plot prior
@@ -380,7 +402,7 @@ def make_1D_result_continuous(filenames, filenames_det=None, figure_name='Contin
                 axes[cidx].get_yaxis().set_tick_params(which='minor', size=0)
                 #axes[cidx].set_yticks([1e-1,1e1])
                 if cidx == 0:
-                    ax_margs_set[0][cidx].set_ylabel(r"p($\beta$)")
+                    ax_margs_set[0][cidx].set_ylabel(r"$p(\beta)$")
                     ax_margs_set[1][cidx].set_ylabel(r'$p(\beta^{\mathrm{det}})$')
                 else:
                     axes[cidx].tick_params(labelleft=False)
@@ -531,7 +553,7 @@ def plot_llh_ratio_CE(flow_dir, outdir, justplot=False):
         corner.hist2d(np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['mchirp']),\
             np.array(popsynth_outputs[(chi_b_id,alpha_id)][bin_conditions]['q']), bins =16, \
             levels=(.50, .90, .99), \
-            weights=np.array(weights_dict[(chi_b_id,alpha_id)][bin_conditions]), contour_kwargs=dict(lw=1.0), \
+            weights=np.array(weights_dict[(chi_b_id,alpha_id)][bin_conditions]), contour_kwargs=dict(linewidths=.5), \
             pcolor_kwargs=dict(alpha=0.0), density=True, ax=ax[row], no_fill_contours=True,\
             plot_datapoints=False)
         ax[row].set_xlim(mchirps[0], mchirps[-1])
@@ -644,7 +666,7 @@ def plot_samps_dataspace(filenames=None, flow_dir=None, outdir=_basepath, justpl
         if pidx>0:
             ax[pidx].tick_params(labelleft=False)
     ax[0].set_ylabel('No. samples')
-    plt.legend(loc='lower center', bbox_to_anchor=(-1.4, 1.02), ncol=7, columnspacing=1.)
+    plt.legend(loc='lower center', bbox_to_anchor=(-1.4, 1.02), ncol=7, columnspacing=1., frameon=False)
     fig.subplots_adjust( left=None, bottom=None,  right=None, top=None, wspace=None, hspace=None)
     fig.tight_layout(pad=1.3)
     fig.savefig(f'{outdir}/pdfs/1D_dataspace_samps_marg.pdf')
