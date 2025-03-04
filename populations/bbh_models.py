@@ -18,7 +18,33 @@ _VALID_SPIN_DISTR = {
     "isotropic": _isotropic_spinmag
 }
 
+def get_params(df, params):
+    inference_params = pd.DataFrame()
 
+    # check if :params: in the dataframe, otherwise perform transformations
+    for param in params:
+        if param not in df.columns:
+            # default transformations
+            if param in _DEFAULT_TRANSFORMS.keys():
+                df[param] = _DEFAULT_TRANSFORMS[param](df)
+            # chieff transformations
+            elif param=='chieff':
+                df['theta1'] = _DEFAULT_TRANSFORMS['theta1'](df)
+                df['theta2'] = _DEFAULT_TRANSFORMS['theta2'](df)
+                # check if spin magnitudes have been provided
+                if not {'a1','a2'}.issubset(df.columns):
+                    if spin_distr in _VALID_SPIN_DISTR:
+                        df['a1'],df['a2'] = _VALID_SPIN_DISTR[spin_distr](df)
+                    else:
+                        raise NameError("Spin magnitudes not provided and valid spin distribution was not specified, so can't generate effective spins!")
+
+                df['chieff'] = _to_chi_eff(df)
+            # otherwise, raise an error
+            else:
+                raise NameError("You specified the parameter {0:s} for inference, but it is not in your population data and you haven't written a transformation to calculate it!".format(param))
+
+    return df
+    
 def get_model_keys(path, channel):
     all_models = []
     models = []

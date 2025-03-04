@@ -49,7 +49,7 @@ class Model(object):
 
 class KDEModel(Model):
     @staticmethod
-    def from_samples(label, samples, params, sensitivity=None, normalize=False, detectable=False, use_unityweights=False, **kwargs):
+    def from_samples(label, samples, params, sensitivity=None, normalize=False, detectable=False, **kwargs):
         """
         Generate a KDE model instance from `samples`, where `params` are \
         series in the `samples` dataframe. Additional *kwargs* can be passed \
@@ -111,11 +111,11 @@ class KDEModel(Model):
         # get KDE bandwidth, if specified in kwargs
         bandwidth = kwargs['bandwidth'] if 'bandwidth' in kwargs.keys() else _kde_bandwidth
 
-        return KDEModel(label, kde_samples, params, bandwidth, cosmo_weights, sensitivity, pdets, optimal_snrs, alpha, normalize=normalize, detectable=detectable, use_unityweights=use_unityweights)
+        return KDEModel(label, kde_samples, params, bandwidth, cosmo_weights, sensitivity, pdets, optimal_snrs, alpha, normalize=normalize, detectable=detectable)
 
 
     def __init__(self, label, samples, params, bandwidth=_kde_bandwidth, cosmo_weights=None, sensitivity=None, pdets=None, optimal_snrs=None, \
-        alpha=1, normalize=False, detectable=False, use_unityweights=False):
+        alpha=1, normalize=False, detectable=False):
         super()
         self.label = label
         self.samples = samples
@@ -133,10 +133,6 @@ class KDEModel(Model):
         self.sample_range = {}
         for param in samples.keys():
             self.sample_range[param] = (samples[param].min(), samples[param].max())
-
-        #if not using cosmo_weights then set to None, later sets combined weights to be 1/no_samples
-        if use_unityweights == True:
-            cosmo_weights = None
 
         # Combine the cosmological and detection weights
         if self.detectable == True:
@@ -252,7 +248,7 @@ class KDEModel(Model):
         likelihood_vals = np.asarray(likelihood_vals).flatten()
         self.cached_values = likelihood_vals
 
-    def __call__(self, data, smallest_N, data_pdf=None, proc_idx=None, return_dict=None, use_reg=True):
+    def __call__(self, data, smallest_N, data_pdf=None, proc_idx=None, return_dict=None):
         """
         Calculate the likelihood of the observations give a particular hypermodel. \
         The expectation is that "data" is a [Nobs x Nsample x Nparams] array. \
