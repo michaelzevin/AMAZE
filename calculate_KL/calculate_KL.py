@@ -27,7 +27,8 @@ alpha_CE = [0.2,0.5,1.0,2.,5.]
 no_samples = args.no_samps
 
 gw_path = args.gw_path
-models_path ='/data/wiay/2297403c/models_reduced.hdf5'
+#_basepath='data/wiay/2297403c'
+models_path =f'{_basepath}/models_reduced.hdf5'
 np.random.seed(12)
 observations, obsdata, p_theta, events = gw_obs.generate_observations(params, gw_path, \
                                         args.Neventsamps, 'posteriors', prior='p_theta_jcb')
@@ -65,23 +66,6 @@ for channel_label in channels:
         flow_KDE_KL = np.zeros((4,5))
         KDE_flow_KL = np.zeros((4,5))
 
-        #cacluate KDE||flow and flow||KDE given the observed GWs
-        """print('cacluating KDE||flow and flow||KDE given the observed GWs')
-        for chi_b_id, xb in enumerate(tqdm(chi_b)):
-            for alpha_id, a in enumerate(alpha_CE):
-
-                p_flow = np.exp(flow[channel_label](obsdata, np.array([chi_b[chi_b_id],np.log(alpha_CE[alpha_id])]), 990903, p_theta))
-
-                p_KDE = KDE[channel_label][submodels_dict[0][chi_b_id]][submodels_dict[1][alpha_id]](obsdata, 990903, p_theta)
-
-                flow_KDE_KL[chi_b_id,alpha_id] = entropy(p_flow, p_KDE)
-                KDE_flow_KL[chi_b_id,alpha_id] = entropy(p_KDE, p_flow)
-
-
-        print(f'saving KDE||flow and flow||KDE given the observed GWs for {channel_label}')
-        np.save(f'/data/wiay/2297403c/amaze_model_select/Nflows_AMAZE_paper/plots/prod_091224/data/{channel_label}_flow_KDE_KL.npy', flow_KDE_KL)
-        np.save(f'/data/wiay/2297403c/amaze_model_select/Nflows_AMAZE_paper/plots/prod_091224/data/{channel_label}_KDE_flow_KL.npy', KDE_flow_KL)
-        """
         model_samples = np.zeros((4,5,no_samples,4))
         model_weights = np.zeros((4,5,no_samples))
 
@@ -103,22 +87,11 @@ for channel_label in channels:
                 KDE_KL[chi_b_id,alpha_id] = -np.mean(np.log(p_kde))
 
         print(f'saving flow_KL-kde_KL for {channel_label}')
-        np.save(f'/data/wiay/2297403c/amaze_model_select/Nflows_AMAZE_paper/plots/prod_091224/data/{channel_label}_flow_KL.npy', flow_KL)
-        np.save(f'/data/wiay/2297403c/amaze_model_select/Nflows_AMAZE_paper/plots/prod_091224/data/{channel_label}_KDE_KL.npy', KDE_KL)
+        np.save(f'/data/{channel_label}_flow_KL.npy', flow_KL)
+        np.save(f'/data/{channel_label}_KDE_KL.npy', KDE_KL)
     else:
         flow_KDE_KL = np.zeros((4))
         KDE_flow_KL = np.zeros((4))
-        #cacluate KDE||flow and flow||KDE given the observed GWs
-        """for chi_b_id, xb in enumerate(chi_b):
-            p_flow = np.exp(flow[channel_label](obsdata, np.array([chi_b[chi_b_id]]), 990903, p_theta))
-            p_KDE = KDE[channel_label][submodels_dict[0][chi_b_id]](obsdata, 990903, p_theta)
-
-            flow_KDE_KL[chi_b_id] = entropy(p_flow, p_KDE)
-            KDE_flow_KL[chi_b_id] = entropy(p_KDE, p_flow)
-
-        np.save(f'/data/wiay/2297403c/amaze_model_select/Nflows_AMAZE_paper/plots/prod_091224/data/{channel_label}_flow_KDE_KL.npy', flow_KDE_KL)
-        np.save(f'/data/wiay/2297403c/amaze_model_select/Nflows_AMAZE_paper/plots/prod_091224/data/{channel_label}_KDE_flow_KL.npy', KDE_flow_KL)
-        """
         model_samples = np.zeros((4,no_samples,4))
         model_weights = np.zeros((4,no_samples))
 
@@ -137,5 +110,5 @@ for channel_label in channels:
             KDE_KL[chi_b_id] = -np.mean(np.log(p_kde))
 
         print(f'saving flow_KL-kde_KL for {channel_label}')
-        np.save(f'/data/wiay/2297403c/amaze_model_select/Nflows_AMAZE_paper/plots/prod_091224/data/{channel_label}_flow_KL.npy', flow_KL)
-        np.save(f'/data/wiay/2297403c/amaze_model_select/Nflows_AMAZE_paper/plots/prod_091224/data/{channel_label}_KDE_KL.npy', KDE_KL)
+        np.save(f'/data/{channel_label}_flow_KL.npy', flow_KL)
+        np.save(f'/data/{channel_label}_KDE_KL.npy', KDE_KL)
