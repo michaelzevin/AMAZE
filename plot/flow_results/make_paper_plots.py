@@ -1,15 +1,11 @@
-
 import argparse
-
-#need to have plot functions linked to from other dir?
 from plot_functions import *
 import glob
 
 """
 Plots results for Nflow inference with AMAZE infrastructure.
 
-By default will plot model corner plots for the trained normalising flow.
-Will also plot discrete and continuous result if args supplied.
+Will also plot model corner plots, discrete and continuous result, and dataspace if args supplied.
 """
 
 argp = argparse.ArgumentParser()
@@ -32,6 +28,7 @@ argp.add_argument("--channel-label", type=str, nargs="+", default="CE", help="")
 argp.add_argument("--conditional", type=float,  nargs="+", help="")
 argp.add_argument("--plot-KDE",  action="store_true", help="If true, adds KDE samples to corner plot")
 argp.add_argument("--justplot",  action="store_true", help="If false, draws samples for population corner plots")
+argp.add_argument("--testCE",  action="store_true", help="If true, formats the corner plot for the test CE figure")
 
 
 args = argp.parse_args()
@@ -49,7 +46,7 @@ cont_result_path = args.cont_result_path
 #make corner plots of specified population
 if args.plot_flow_corner:
     for channel in channel_label:
-        make_pop_corner(channel, hyperparam_idxs, justplot=justplot, flow_dir=flow_dir, conditional=conditional, outdir=outdir, plot_KDE=args.plot_KDE)
+        make_pop_corner(channel, hyperparam_idxs, justplot=justplot, flow_dir=flow_dir, conditional=conditional, outdir=outdir, plot_KDE=args.plot_KDE, testCE=args.testCE)
 
 if args.plot_llh_ratio:
     plot_llh_ratio_CE(flow_dir, outdir=outdir, justplot=justplot)

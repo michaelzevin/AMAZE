@@ -71,14 +71,15 @@ _base_corner_kwargs = dict(
     plot_datapoints=True,
     fill_contours=True,
     show_titles=False,
-    hist_kwargs=dict(density=True),
+    hist_kwargs=dict(density=True,linewidth=.75),
+    contour_kwargs=dict(linewidths=1.),
     labels=_param_label,
     hist2d_kwargs= dict(data_kwargs=dict(alpha=0.01))
 )
 
 def load_result_samps(filenames, Nhyper=2, Nchannels=5, detectable=False):
     """
-    Loads hyperposterior samples from like of hdf5 files
+    Loads hyperposterior samples from list of hdf5 files
     filenames : list, array
     """
     samples_allchains = np.array([])
@@ -182,8 +183,12 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
         weights_dict[key]= popsynth_outputs[key]['weight']
 
     #set colours for plot
-    colors=['C1', 'royalblue', 'royalblue']
-    labels=['Underlying Model', 'Normalising Flow']
+    if testCE:
+        colors=['C1', 'royalblue']
+        labels=['Underlying Model', 'Normalising Flow']
+    else:
+        colors=['C1', 'purple', 'royalblue']
+        labels=['Underlying Model', 'KDE', 'Normalising Flow']
 
     model_kwargs = deepcopy(_base_corner_kwargs)
     model_kwargs["color"] = colors[0]
@@ -194,8 +199,6 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
     corner_kwargs_flow = deepcopy(_base_corner_kwargs)
     corner_kwargs_flow["color"] = colors[2]
     corner_kwargs_flow["hist_kwargs"]["color"] = colors[2]
-
-    plt.rcParams['figure.figsize'] = [figure_width, figure_width]
 
     #plot flow samples without training models or KDEs if off of training model grid
     print('plotting samples')
@@ -214,13 +217,13 @@ def make_pop_corner(channel_label, hyperparam_idxs, justplot=True, flow_dir=None
     plt.legend(
             handles=[
                 mlines.Line2D([], [], color=colors[i], label=labels[i])
-                for i in range(2)
+                for i in range(len(colors))
             ],
             frameon=False,
             bbox_to_anchor=(1, 4), loc="upper right"
         )
     #save figure
-    fig.set_size_inches(figure_width*2, figure_width*2)
+    fig.set_size_inches(figure_width*1.5, figure_width*1.5)
     if testCE:
         plt.savefig(f"{outdir}/pdfs/{channel_label}_flowKDEmodel_corner_chib{hyperparam_idxs[0]}testCE.pdf")
     else:
@@ -654,11 +657,12 @@ def plot_samps_dataspace(filenames=None, flow_dir=None, outdir=_basepath, justpl
                 label=channel)
 
     for pidx,param in enumerate(params):
-        ax[pidx].hist(total_samps_ordered[:,pidx], color='black', histtype='step', bins=bins[pidx], lw=1, ls='-', label='Total', alpha=.7)
+        ax[pidx].hist(total_samps_ordered[:,pidx], color='slategrey', histtype='stepfilled', bins=bins[pidx], lw=1,\
+            zorder=-1000, ls='-', label='Total', alpha=.6,)
         mask = np.logical_and(mask_min[pidx]<total_samps_ordered[:,pidx],total_samps_ordered[:,pidx]<mask_max[pidx])
         ax[pidx].hist(PLPP_samps[pidx], color='deeppink', histtype='step',\
             weights=np.ones_like(PLPP_samps[pidx])*len(total_samps_ordered[mask,pidx])/len(PLPP_samps[pidx]),\
-            bins=bins[pidx], lw=1, ls='-', label='Parametric', alpha=0.7, zorder=-100)
+            bins=bins[pidx], lw=1, ls='-', label='Parametric', zorder=-100)
         ax[pidx].set_yscale('log')
         ax[pidx].set_xlabel(_labels_dict[param])
         ax[pidx].set_ylim(5,ax_ylims[0])
