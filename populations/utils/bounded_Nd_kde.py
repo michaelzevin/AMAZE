@@ -150,7 +150,6 @@ class Bounded_Nd_kde(kde):
 
 
     def __call__(self, pts):
-        #Returns PDF of KDE at points given by pts
         pts = np.atleast_2d(pts)
         out_of_bounds = np.zeros(pts.shape[1], dtype='bool')
 
