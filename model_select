@@ -22,12 +22,6 @@ import scipy.stats
 from populations import bbh_models, gw_obs
 from sample import sample
 
-def print_both(file, *args):
-    toprint = ' '.join([str(arg) for arg in args])
-    print(toprint)
-    file.write(toprint)
-    file.write('\n')
-
 # --- Argument handling --- #
 argp = argparse.ArgumentParser()
 argp.add_argument("--file-path", type=str, required=True, help="Path to where the population models are living. Models should be stored in hdf5 format, with the channel as the base group, and model parameters as subgroups (e.g., 'CE/chi01/alpha0.5').")
@@ -90,15 +84,15 @@ print_file = open(f"outdir/output_{args.name}.txt", "a")
 if use_flows==True:
     if verbose:
         if discrete_sample:
-            print_both(print_file, 'Using Normalising Flows for discrete inference.')
+            print('Using Normalising Flows for discrete inference.')
         else:
-            print_both(print_file, 'Using Normalising Flows for continuous inference.')
+            print('Using Normalising Flows for continuous inference.')
 else:
     if discrete_sample==False:
         warnings.warn('Cannot use KDEs for continuous inference. Switching to discrete inference.')
         discrete_sample=True
     if verbose:
-        print_both(print_file, 'Using KDEs for inference.')
+        print('Using KDEs for inference.')
 
 #sets up uniform regularisation constant N
 if args.regularisation_N == None:
@@ -122,14 +116,14 @@ params = list(np.asarray(args.params).flatten())
 if use_flows==True:
     # Flow models do not support learning the detectable distribution
     if verbose:
-        print_both(print_file, "\nReading models, applying transformations, and initializing underlying Normalising Flow models...\n")
+        print("\nReading models, applying transformations, and initializing underlying Normalising Flow models...\n")
     model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows, flow_path=args.flow_model_filename,\
             sensitivity=args.sensitivity, device=args.device, detectable=False)
 else:
     # Construct both "underlying" KDE models (anything that has Pdet>0) and "detectable" KDE models
     # `normalize` argument normalizes KDEs on unit cube
     if verbose:
-        print_both(print_file, "\nReading models, applying transformations, and initializing underlying KDEs...\n")
+        print("\nReading models, applying transformations, and initializing underlying KDEs...\n")
     model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
         sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=False)
     _, pop_models_detectable = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
@@ -174,11 +168,11 @@ while hyperidx < Nhyper:
     hyperidx += 1
 
 if verbose:
-    print_both(print_file, "")
-    print_both(print_file, "Formation channels: " + ", ".join(channels))
-    print_both(print_file, "Astrophysical models: " + ", ".join(model_names))
-    print_both(print_file, "Parameters for inference: " + ", ".join(params))
-    print_both(print_file, "")
+    print("")
+    print("Formation channels: " + ", ".join(channels))
+    print("Astrophysical models: " + ", ".join(model_names))
+    print("Parameters for inference: " + ", ".join(params))
+    print("")
 
 
 # --- Perform some checks to make sure everything is compatible
@@ -244,7 +238,7 @@ if args.prior and args.model0 is not 'gwobs' and args.uncertainty not in ['delta
 # --- If model0 specified, store KDE models in `model0` dict and save relative fractions
 if not gwobs:
     if verbose:
-        print_both(print_file, "Saving relative fractions and storing true model...\n")
+        print("Saving relative fractions and storing true model...\n")
 
     # since channels are sorted alphabetically, branching fractions are defined in the same order
     model0 = {}
@@ -265,19 +259,19 @@ if not gwobs:
 
     # print model0 info
     if verbose:
-        print_both(print_file, "'{0:s}' set as true model".format(args.model0))
-        print_both(print_file, "  model ranges:")
+        print("'{0:s}' set as true model".format(args.model0))
+        print("  model ranges:")
         for channel, mdl in model0.items():
-            print_both(print_file, "    {0:s} (beta={1:0.2f})".format(channel, mdl.rel_frac))
+            print("    {0:s} (beta={1:0.2f})".format(channel, mdl.rel_frac))
             for param in args.params:
-                print_both(print_file, "      {0:s}: {1:0.3f} - {2:0.3f}".format(param,\
+                print("      {0:s}: {1:0.3f} - {2:0.3f}".format(param,\
                         mdl.sample_range[param][0], mdl.sample_range[param][1]))
-        print_both(print_file, "")
+        print("")
 
 
 # --- Generate observations ([observations, params, samples])
 if verbose:
-    print_both(print_file, "Generating observations...\n")
+    print("Generating observations...\n")
 
 # Calls gw_obs.py to generate samples if argument is passed
 #model0 denotes the model data if not using true GW data
@@ -286,13 +280,13 @@ if gwobs:
     observations, obsdata, p_theta, events = gw_obs.generate_observations(params, args.gw_path, \
                                             args.Nsamps, args.uncertainty, args.prior)
     if verbose:
-        print_both(print_file, "Using the following {0:d} GW observations for inference:".format(len(events)))
-        print_both(print_file, *events)
-        print_both(print_file, "")
+        print("Using the following {0:d} GW observations for inference:".format(len(events)))
+        print(*events)
+        print("")
 
 else:
     if verbose:
-        print_both(print_file, "Drawing {0:d} observations from model0, assuming that the branching fractions represent the *underlying* distribution, and using the '{1:s}' method for measurement uncertainty...".format(int(args.Nobs), args.uncertainty))
+        print("Drawing {0:d} observations from model0, assuming that the branching fractions represent the *underlying* distribution, and using the '{1:s}' method for measurement uncertainty...".format(int(args.Nobs), args.uncertainty))
     rand_vars = np.random.random(size=args.Nobs)
     randlow_hold = 0
     for idx, channel in enumerate(model0):
@@ -334,7 +328,7 @@ else:
 
 if use_flows==True:
     if verbose:
-        print_both(print_file, 'Training/Loading flows')
+        print('Training/Loading flows')
     for i, channel in enumerate(channels):
         if args.train_flows == True:
             if use_wandb == True:
@@ -347,14 +341,14 @@ if use_flows==True:
             pop_models[channel].load_model(args.flow_model_filename, device=args.device)
 else:
     if verbose:
-        print_both(print_file, "Freezing sample evaluations in their respective models...")
+        print("Freezing sample evaluations in their respective models...")
     for model in model_names:
         if verbose:
-            print_both(print_file, "  {0:s}".format(model))
+            print("  {0:s}".format(model))
         #freezing the sample evals means using the call function, this is where the prior on the posterior samples is set in
         getFromDict(pop_models, model.split('/')).freeze(obsdata, smallest_N, data_pdf=p_theta, multiproc=args.multiproc)
     if verbose:
-        print_both(print_file, "Done freezing KDE evaluations of observations!\n")
+        print("Done freezing KDE evaluations of observations!\n")
 
 # ---  Copy kde_models so that they all have the same levels of hyperparameters
 all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
@@ -414,7 +408,7 @@ lnprb = lnprb.reshape((lnprb.shape[0] * lnprb.shape[1]))
 
 # --- Print summary info about the sampling
 if verbose:
-    print_both(print_file, "Sample breakdown:")
+    print("Sample breakdown:")
     recovered_vals = {}
     smdls = list(set([x.split('/',1)[1] for x in model_names]))
     for smdl in sorted(smdls):
@@ -453,17 +447,17 @@ if verbose:
         sample_counts = recovered_vals[smdl]['counts']
         sample_betas = recovered_vals[smdl]['betas']
         sample_betas_detectable = recovered_vals[smdl]['betas_detectable']
-        print_both(print_file, "  Model {0:s}".format(smdl))
-        print_both(print_file, "     {0:d} samples".format(sample_counts))
-        print_both(print_file, "     betas={0}".format(list(sample_betas.items())))
-        print_both(print_file, "     detectable betas={0}".format(list(sample_betas_detectable.items())))
-    print_both(print_file, "")
+        print("  Model {0:s}".format(smdl))
+        print("     {0:d} samples".format(sample_counts))
+        print("     betas={0}".format(list(sample_betas.items())))
+        print("     detectable betas={0}".format(list(sample_betas_detectable.items())))
+    print("")
 
 
 # Plot samples and histograms of betas per model
 if make_plots==True:
     if verbose:
-        print_both(print_file, "Plotting samples...\n")
+        print("Plotting samples...\n")
     for hyper_idx in list(submodels_dict.keys()):
         # Need samples back in their original shape (separated by chains)
         msplot.plot_samples(samples.reshape(original_shape), submodels_dict, model_names, channels, model0, name=args.name, hyper_idx=hyper_idx, detectable_beta=False)
@@ -479,7 +473,7 @@ if args.save_samples:
         fname = "output.hdf5"
 
     if verbose:
-        print_both(print_file, "Saving information to '{0:s}'...\n".format(fname))
+        print("Saving information to '{0:s}'...\n".format(fname))
 
     hfile = h5py.File(fname, "w")
     bsgrp = hfile.create_group("model_selection")
