@@ -19,8 +19,11 @@ scheme of GWTC-1.
 """
 
 # can specify only a subset of GW events to use by uncommenting the line below
-_events_to_use = None
-#_events_to_use = ["GW150914","GW151012","GW151226","GW170104","GW170608","GW170729","GW170809","GW170814","GW170818","GW170823"]
+_events_to_use=None
+#_events_to_use = pd.read_csv('/Users/stormcolloms/Documents/PhD/Project_work/AMAZE_model_selection/gwtc3_events/events_processed/events_processed/gwnames.csv',\
+#     dtype=str)
+#_events_to_use = np.reshape(np.array(_events_to_use),-1).tolist()
+#_events_to_use = ["GW150914", "GW151226", "GW170608", "GW190519_153544", "GW190412"]#,"GW151012","GW151226","GW170104","GW170608","GW170729","GW170809","GW170814","GW170818","GW170823"]
 
 # specify the hdf5 key for the approximant being used
 _posterior_key = "combined"
@@ -66,10 +69,13 @@ def generate_observations(params, gwpath, Nsamps, mesaurement_uncertainty='delta
         gw_files = [gw+'.hdf5' for gw in gw_names]
     else:
         gw_files = []
+        events_to_exclude = np.array(['GW190521.hdf5'])
         for f in os.listdir(gwpath):
             if 'prior' not in f:
-                gw_files.append(f)
-        gw_names = [gw.split('.')[0] for gw in gw_files]
+                if any(gwname not in f for gwname in events_to_exclude):
+                    gw_files.append(f)
+    gw_names = [gw.split('.')[0] for gw in gw_files]
+
 
     # Check to see if the files are in the obspath, else raise error
     if _events_to_use:
@@ -92,7 +98,7 @@ def generate_observations(params, gwpath, Nsamps, mesaurement_uncertainty='delta
     if mesaurement_uncertainty=='delta':
         samples_shape = (len(gw_files), 1, len(params))
         samples=np.zeros(samples_shape)
-    elif mesaurement_uncertainty in ['gaussian', 'posteriors']:
+    elif mesaurement_uncertainty in ['gaussian', 'posteriors', 'test']:
         samples_shape = (len(gw_files), Nsamps, len(params))
         samples=np.zeros(samples_shape)
     else:
@@ -143,11 +149,37 @@ def generate_observations(params, gwpath, Nsamps, mesaurement_uncertainty='delta
                 samples[idx, :, pidx] = np.random.normal(loc=mean, \
                                                 scale=sigma, size=Nsamps)
         if mesaurement_uncertainty == 'posteriors':
+            
+            #set random seed for consistant posterior samples
+            np.random.seed(12)
             if len(df) >= Nsamps:
                 sample_idxs = np.random.choice(np.arange(len(df)), size=Nsamps, replace=False)
             else:
-                sample_idxs = np.random.choice(np.arange(len(df)), size=Nsamps, replace=True)
+                #draw all samples Ndraws times plus random without replacement extra
+                Ndraws = 0
+                sample_idxs = np.zeros(Nsamps, dtype=int)
+                while Ndraws*len(df)<Nsamps-len(df):
+                    sample_idxs[Ndraws*len(df):(Ndraws+1)*len(df)] = np.arange(len(df))
+                    Ndraws+=1
+                sample_idxs[Ndraws*len(df):Nsamps] = np.random.choice(np.arange(len(df)), size=Nsamps-(Ndraws*len(df)), replace=False)
+                    
+            samples[idx, :, :] = df[params].iloc[sample_idxs]
 
+            if prior is not None:
+                p_theta[idx, :] = df[prior].iloc[sample_idxs]
+
+                #redraw samples until all prior samples are not 0
+                while np.any(p_theta[idx, :]==0.):
+                    p_theta_zero_idx = np.where([p_theta[idx, :]==0.])[1]
+                    print(p_theta_zero_idx)
+                    replacement_sample_idxs = np.random.choice(np.arange(len(df)), size=p_theta_zero_idx.shape, replace=False)
+
+                    samples[:, p_theta_zero_idx, :] = df[params].iloc[replacement_sample_idxs]
+                    p_theta[:,p_theta_zero_idx] = df[prior].iloc[replacement_sample_idxs]
+
+
+        if mesaurement_uncertainty == 'test':
+            sample_idxs = [9,81,457]
             samples[idx, :, :] = df[params].iloc[sample_idxs]
             if prior is not None:
                 p_theta[idx, :] = df[prior].iloc[sample_idxs]

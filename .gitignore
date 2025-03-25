@@ -5,3 +5,14 @@
 *__pycache__
 *.swp
 *.ipynb_checkpoints
+*.hdf5
+*.tar.gz
+*.npy
+*.txt
+*.png
+*.pdf
+*.csv
+wandb/
+*.h5
+*.zip
+*.prior

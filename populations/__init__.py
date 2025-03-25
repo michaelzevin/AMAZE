@@ -58,6 +58,14 @@ class KDEModel(Model):
         will include this in the construction of all your KDEs. If `sensitivity` \
         is provided, samples used to generate the detection-weighted KDE will be \
         weighted according to the key in the argument `pdet_*sensitivity*`.
+
+        Inputs:
+        label : str
+            submodel label of form CE/chi00/alpha02
+        samples : pandas Dataframe
+            binary samples from population synthesis.
+        params : list of str
+            subset of mchirp, q, chieff, z
         """
         # check that the provdided sensitivity series is in the dataframe
         if sensitivity is not None:
@@ -106,7 +114,8 @@ class KDEModel(Model):
         return KDEModel(label, kde_samples, params, bandwidth, cosmo_weights, sensitivity, pdets, optimal_snrs, alpha, normalize=normalize, detectable=detectable)
 
 
-    def __init__(self, label, samples, params, bandwidth=_kde_bandwidth, cosmo_weights=None, sensitivity=None, pdets=None, optimal_snrs=None, alpha=1, normalize=False, detectable=False):
+    def __init__(self, label, samples, params, bandwidth=_kde_bandwidth, cosmo_weights=None, sensitivity=None, pdets=None, optimal_snrs=None, \
+        alpha=1, normalize=False, detectable=False):
         super()
         self.label = label
         self.samples = samples
@@ -203,7 +212,7 @@ class KDEModel(Model):
         """
         self.Nobs_from_beta = Nobs
 
-    def freeze(self, data, data_pdf=None, multiproc=True):
+    def freeze(self, data, smallest_N, data_pdf=None, multiproc=True):
         """
         Caches the values of the model likelihood at the data points provided. This \
         is useful to construct the hierarchal model likelihood since it \
@@ -221,8 +230,8 @@ class KDEModel(Model):
             return_dict = manager.dict()
             for idx, (d,d_pdf) in tqdm(enumerate(zip(data,data_pdf)), total=len(data)):
                 d = d.reshape((1, d.shape[0], d.shape[1]))
-                d_pdf = [d_pdf]
-                p = multiprocessing.Process(target=self, args=(d,d_pdf,idx,return_dict,))
+                d_pdf = d_pdf.reshape((1, d_pdf.shape[0]))
+                p = multiprocessing.Process(target=self, args=(d,smallest_N,d_pdf,idx,return_dict,))
                 processes.append(p)
                 p.start()
             for process in processes:
@@ -234,12 +243,12 @@ class KDEModel(Model):
             for idx, (d,d_pdf) in tqdm(enumerate(zip(data,data_pdf)), total=len(data)):
                 d = d.reshape((1, d.shape[0], d.shape[1]))
                 d_pdf = d_pdf.reshape((1, d_pdf.shape[0]))
-                likelihood_vals.append(self(d, d_pdf))
+                likelihood_vals.append(self(d, smallest_N, d_pdf))
 
         likelihood_vals = np.asarray(likelihood_vals).flatten()
         self.cached_values = likelihood_vals
 
-    def __call__(self, data, data_pdf=None, proc_idx=None, return_dict=None):
+    def __call__(self, data, smallest_N, data_pdf=None, proc_idx=None, return_dict=None):
         """
         Calculate the likelihood of the observations give a particular hypermodel. \
         The expectation is that "data" is a [Nobs x Nsample x Nparams] array. \
@@ -260,6 +269,12 @@ class KDEModel(Model):
         # store value for multiprocessing
         if return_dict is not None:
             return_dict[proc_idx] = likelihood
+
+        if smallest_N is not None:
+            #population probability plus uniform regularisation
+            pi_reg = 1/(smallest_N+1)
+            q_weight = smallest_N/(smallest_N+1)
+            likelihood = (q_weight * likelihood) + pi_reg
         return likelihood
 
     def marginalize(self, params, alpha, bandwidth=_kde_bandwidth):
