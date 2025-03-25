@@ -27,7 +27,7 @@ argp = argparse.ArgumentParser()
 argp.add_argument("--file-path", type=str, required=True, help="Path to where the population models are living. Models should be stored in hdf5 format, with the channel as the base group, and model parameters as subgroups (e.g., 'CE/chi01/alpha0.5').")
 argp.add_argument("--model0", type=str, required=True, help="Sets the 'true' model from which mock observations are drawn. When there are multiple parameters in the submodel, separate with '/' (e.g., 'chi00/alpha5'). If 'gwobs', will use the actual GW observations.")
 argp.add_argument("--use-flows", action="store_true", help="True if using normalising flows to estimate hyperlikelihoods in inference. Otherwise use KDEs. Default=False.")
-argp.add_argument("--discrete-sample", action="store_true", help="If true then sample on hyperparameter indices to just evaluate likelihood at locations of training models. Set to True is useflows is False. Default=False.")
+argp.add_argument("--continuous-sample", action="store_true", help="If true then sample on hyperparameter values. If false then sample on hyperparameter indices to just evaluate likelihood at locations of training models. Set to False is useflows is False. Default=False.")
 argp.add_argument("--gw-path", type=str, help="Sets the path for where the GW samples are living. Necessary if model0='gwobs'. Default=None.")
 argp.add_argument("--prior", type=str, help="Sets the key for the prior weights of each GW sample. This is used to calculate p(theta), which we use to divide out the prior in the heirarchical inference. Default=None.")
 argp.add_argument("--channels", nargs="+", default=['CE', 'CHE', 'GC', 'NSC', 'SMT'], help="Specifies the formation channels you wish to consider in the inference. If gwobs not being used, must have the same length as the number of betas provided. Note that the order of betas will be interpretted in the same order as channels. Default=['CE', 'CHE', 'GC', 'NSC', 'SMT'].")
@@ -75,7 +75,7 @@ else:
 verbose=args.verbose
 make_plots=args.make_plots
 use_flows=args.use_flows
-discrete_sample=args.discrete_sample
+continuous_sample=args.continuous_sample
 use_wandb=args.use_wandb
 lr = np.array(args.lr, dtype=float)
 print_file = open(f"outdir/output_{args.name}.txt", "a")
@@ -83,14 +83,14 @@ print_file = open(f"outdir/output_{args.name}.txt", "a")
 # Check whether to use normalising flows or KDEs for inference, and if using KDEs set discrete inference to True
 if use_flows==True:
     if verbose:
-        if discrete_sample:
-            print('Using Normalising Flows for discrete inference.')
-        else:
+        if continuous_sample==True:
             print('Using Normalising Flows for continuous inference.')
+        else:
+            print('Using Normalising Flows for discrete inference.')
 else:
-    if discrete_sample==False:
+    if continuous_sample==True:
         warnings.warn('Cannot use KDEs for continuous inference. Switching to discrete inference.')
-        discrete_sample=True
+        continuous_sample=False
     if verbose:
         print('Using KDEs for inference.')
 
@@ -318,6 +318,27 @@ else:
     # assume equal prior weight for each posterior sample
     p_theta = np.ones((obsdata.shape[0],obsdata.shape[1]))
 
+# plot for paper (uncomment if generating)
+#print("\nPlotting marginalized KDE models...")
+#from plot import plot_for_paper
+#observations, obsdata, p_theta, events = gw_obs.generate_observations(params, args.gw_path, args.Nsamps, 'delta')
+#fixed_vals = ['alpha10']
+#plot_for_paper.plot_1D_kdemodels(model_names, kde_models_detectable, params, observations, obsdata, events, model0, name=args.name, fixed_vals=fixed_vals, plot_obs=True, plot_obs_samples=False)
+#exit()
+
+# Plot the KDEs and observations
+if use_flows==False:
+    if make_plots==True:
+        if verbose==True:
+            print("\nPlotting marginalized KDE models...")
+        if len(args.model0.split('/'))>1:
+            fixed_vals = [args.model0.split('/')[-1]]
+        else:
+            fixed_vals = ['alpha10']
+        msplot.plot_1D_kdemodels(model_names, kde_models_detectable, params, observations, obsdata, \
+            model0, name=args.name, fixed_vals=fixed_vals, plot_obs=True, plot_obs_samples=False)
+        if verbose:
+            print("")
 
 # --- Prepare population models
 # If using Flows, train or load a previously trained model for each formation channel
@@ -387,14 +408,14 @@ if discrete_sample:
     sampler = sample.Sampler(model_names, hyperparam_bounds=[[0, len(hyperparam_dict[0])], [0, len(hyperparam_dict[1])]], likelihood='emcee_lnlike_disc')
 else:
     sampler = sample.Sampler(model_names)
-sampler.sample(pop_models, obsdata, use_flows, smallest_N, discrete_sample, prior_pdf=p_theta, verbose=verbose)
+sampler.sample(pop_models, obsdata, use_flows, smallest_N, continuous_sample, prior_pdf=p_theta, verbose=verbose)
 samples = sampler.samples
 raw_samples = samples.copy()
 lnprb = sampler.lnprb
 submodels_dict = sampler.submodels_dict
 
 # take the floor of the hyperparameters to get the model indices for discrete sampling
-if discrete_sample:
+if continuous_sample==False:
     for hyper_idx in list(submodels_dict.keys()):
         samples[:,:,hyper_idx] = np.floor(samples[:,:,hyper_idx]).astype(int)
 
@@ -405,6 +426,44 @@ samples = samples.reshape((samples.shape[0] * samples.shape[1], samples.shape[2]
 raw_samples = raw_samples.reshape((raw_samples.shape[0] * raw_samples.shape[1], raw_samples.shape[2]))
 lnprb = lnprb.reshape((lnprb.shape[0] * lnprb.shape[1]))
 
+# Get samples for both *detectable* branching fractions and *underlying* branching fractions -- for KDEs only
+#requires addition to do this for flows
+if use_flows==False:
+    if verbose:
+        print("Converting underlying betas from sampler to detectable betas...\n")
+    detectable_samples = samples.copy()
+    smdls = list(set([x.split('/',1)[1] for x in model_names]))
+    # get the conversion factors between the detectable and underlying distributions
+    for smdl in sorted(smdls):
+        detectable_convfacs = []
+        for channel in channels:
+            detectable_convfacs.append(getFromDict(kde_models, [channel]+smdl.split('/')).alpha)
+        detectable_convfacs = np.asarray(detectable_convfacs)
+        # loop over hyperparams to get samples in this submodel
+        hyperparams = smdl.split('/')
+        for idx, param in enumerate(hyperparams):
+            hyper_idx = list(submodels_dict[idx].keys())[list(submodels_dict[idx].values()).index(param)]
+            if idx==0:
+                matching_idxs = np.where(samples[:,idx] == hyper_idx)[0]
+                matching_samps = samples[matching_idxs]
+            else:
+                matching_idxs = matching_idxs[np.where(matching_samps[:,idx] == hyper_idx)[0]]
+                matching_samps = samples[matching_idxs]
+        # if no samples are in this model, continue
+        if len(matching_idxs)==0:
+            continue
+        # convert hyperparams of these samples accordingly to get the underlying betas
+        converted_betas = detectable_samples[matching_idxs,len(hyperparams):] * detectable_convfacs
+        converted_betas /= converted_betas.sum(axis=1, keepdims=True)
+        detectable_samples[matching_idxs,len(hyperparams):] = converted_betas
+
+        # save converted relative fractions to model0
+        if smdl==args.model0:
+            converted_rel_fracs = betas * detectable_convfacs
+            converted_rel_fracs /= np.sum(converted_rel_fracs)
+            for cidx, channel in enumerate(channels):
+                model0[channel].rel_frac_detectable(converted_rel_fracs[cidx])
+                model0_detectable[channel].rel_frac_detectable(converted_rel_fracs[cidx])
 
 # --- Print summary info about the sampling
 if verbose:

@@ -105,7 +105,7 @@ posteriors!".format(self.posterior_name))
 
         self.hyperparam_bounds = kwargs['hyperparam_bounds'] if 'hyperparam_bounds' in kwargs else _hyperparam_bounds
 
-    def sample(self, pop_models, obsdata, use_flows, smallest_N, discrete_sample, prior_pdf, verbose=True):
+    def sample(self, pop_models, obsdata, use_flows, smallest_N, continuous_sample, prior_pdf, verbose=True):
         """
         Initialize and run the sampler
 
@@ -119,8 +119,8 @@ posteriors!".format(self.posterior_name))
         smallest_N : int
             Value by which to regularise the population distributions.
             See eq. 2 in Colloms et al.
-        discrete_sample : bool
-            True if preforming discrete inference (either flows or KDEs). If False, performs continuous inference (flows only)
+        continuous_sample : bool
+            True if performing continuous inference with normalising flows flows. If False, performs discrete inference (flows or KDEs)
         prior_pdf : array
             Prior value on each GW posterior sample in obsdata
         """
@@ -133,7 +133,7 @@ posteriors!".format(self.posterior_name))
         #selects points in uniform prior for chi_b
         p0[:,0] = np.random.uniform(self.hyperparam_bounds[0][0], self.hyperparam_bounds[0][1], size=self.nwalkers)
         #select points in log uniform in alphaCE (uniform over alphaCE indices, or loguniform in alphaCE values)
-        if discrete_sample:
+        if continuous_sample==False:
             p0[:,1] = np.random.uniform(self.hyperparam_bounds[1][0], self.hyperparam_bounds[1][1], size=self.nwalkers)
         else:
             p0[:,1] = loguniform.rvs(self.hyperparam_bounds[1][0], self.hyperparam_bounds[1][1], size=self.nwalkers)
@@ -144,7 +144,7 @@ posteriors!".format(self.posterior_name))
 
         # --- Do the sampling
         #set arguments to pass to self.posterior
-        posterior_args = [obsdata, pop_models, self.submodels_dict, self.channels, _concentration, use_flows, smallest_N, prior_pdf, self.hyperparam_bounds, discrete_sample]
+        posterior_args = [obsdata, pop_models, self.submodels_dict, self.channels, _concentration, use_flows, smallest_N, prior_pdf, self.hyperparam_bounds, continuous_sample]
         if verbose:
             print("Sampling...")
         #initialise emcee sampler with self.posterior as probability function
@@ -178,7 +178,7 @@ posteriors!".format(self.posterior_name))
 
 # --- Define the likelihood and prior
 
-def lnp(x, submodels_dict, _concentration, hyperparam_bounds, discrete_sample):
+def lnp(x, submodels_dict, _concentration, hyperparam_bounds, continuous_sample):
     """
     Log of the prior. 
     Returns logL of -inf for points outside hyperparam_bounds.
@@ -199,7 +199,7 @@ def lnp(x, submodels_dict, _concentration, hyperparam_bounds, discrete_sample):
     if np.sum(betas_tmp) != 1.0:
         return -np.inf
 
-    if discrete_sample:
+    if continuous_sample==False:
         alpha_CE_prior = 0
     else:
         alpha_CE_prior = loguniform.logpdf(x[1],a=hyperparam_bounds[1][0], b=hyperparam_bounds[1][1])
@@ -332,7 +332,7 @@ def lnlike_disc(x, data, pop_models, submodels_dict, channels, prior_pdf, use_fl
     #returns lnprob summed over events (probability multiplied over events - see one channel eq D13 for full likelihood calc)
     return (lnprob-np.log(alpha)).sum()
 
-def lnpost(x, data, pop_models, submodels_dict, channels, _concentration, use_flows, smallest_N, prior_pdf, hyperparam_bounds, discrete_sample):
+def lnpost(x, data, pop_models, submodels_dict, channels, _concentration, use_flows, smallest_N, prior_pdf, hyperparam_bounds, continuous_sample):
     """
     Combines the prior and likelihood to give a log posterior probability 
     at a given point
@@ -359,19 +359,19 @@ def lnpost(x, data, pop_models, submodels_dict, channels, _concentration, use_fl
             Prior value on each GW posterior sample in obsdata
     hyperparam_bounds : array
         lower and upper limits on the priors for chi_b and alpha_CE or their model indices
-    discrete_sample : bool
-            True if preforming discrete inference (either flows or KDEs). If False, performs continuous inference (flows only)
+    continuous_sample : bool
+        True if performing continuous inference with normalising flows flows. If False, performs discrete inference (flows or KDEs)
     
     Returns
         log likelihood plus log prior
     """
     # Prior
-    log_prior = lnp(x, submodels_dict, _concentration, hyperparam_bounds, discrete_sample)
+    log_prior = lnp(x, submodels_dict, _concentration, hyperparam_bounds, continuous_sample)
     if not np.isfinite(log_prior):
         return log_prior
 
     # Likelihood
-    if discrete_sample:
+    if continuous_sample==False:
         log_like = lnlike_disc(x, data, pop_models, submodels_dict, channels, prior_pdf, use_flows, smallest_N)
     else:
         log_like = lnlike_cont(x, data, pop_models, submodels_dict, channels, prior_pdf, smallest_N)
