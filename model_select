@@ -78,7 +78,6 @@ use_flows=args.use_flows
 continuous_sample=args.continuous_sample
 use_wandb=args.use_wandb
 lr = np.array(args.lr, dtype=float)
-print_file = open(f"outdir/output_{args.name}.txt", "a")
 
 # Check whether to use normalising flows or KDEs for inference, and if using KDEs set discrete inference to True
 if use_flows==True:
@@ -404,8 +403,9 @@ if args.random_seed:
 
 # --- Do the sampling!
 #Here we pass different args is we are doing discrete or continuous sampling of the population model parameters
-if discrete_sample:
-    sampler = sample.Sampler(model_names, hyperparam_bounds=[[0, len(hyperparam_dict[0])], [0, len(hyperparam_dict[1])]], likelihood='emcee_lnlike_disc')
+if continuous_sample==False:
+    hyperparam_bounds = [[0, len(hyperparam_dict[i])] for i in range(Nhyper)]
+    sampler = sample.Sampler(model_names, hyperparam_bounds=hyperparam_bounds, likelihood='emcee_lnlike_disc')
 else:
     sampler = sample.Sampler(model_names)
 sampler.sample(pop_models, obsdata, use_flows, smallest_N, continuous_sample, prior_pdf=p_theta, verbose=verbose)
