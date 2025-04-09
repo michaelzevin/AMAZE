@@ -51,7 +51,7 @@ class Model(object):
 
 class FlowModel(Model):
     @staticmethod
-    def from_samples(channel, samples, params, flow_path, sensitivity=None, device='cpu'):
+    def from_samples(channel, samples, params, channel_hyperparams, smdl_indxs_combos, flow_path, sensitivity=None, device='cpu'):
         """
         Generate a Flow model instance from `samples`, where `params` are series in the `samples` dataframe. 
         
@@ -82,10 +82,55 @@ class FlowModel(Model):
         ----------
         FlowModel : obj
         """
-        return FlowModel(channel, samples, params, flow_path, sensitivity, device=device)
+
+        #set model keys for specified training data
+        self.model_keys = smdl_indxs_combos
+
+        #initialise dictionaries of alpha, cosmo_weights, pdet, optimal_snrs, and combined_weights for each submodel
+        alpha = dict.fromkeys(samples.keys())
+        cosmo_weights= dict.fromkeys(samples.keys())
+        combined_weights= dict.fromkeys(samples.keys())
+
+        for model_idxs in self.model_keys:
+            #grab samples for each submodel according to key in samples dict
+            if model_idxs.ndim > 0:
+                dict_key = tuple(model_idxs)
+            else:
+                dict_key = model_idxs
+            sbml_samps = samples[dict_key]
+
+            #check that defined sensitivity exists in submodel dataframe
+            if sensitivity is not None:
+                if 'pdet_'+sensitivity not in sbml_samps.columns:
+                    raise ValueError("{0:s} was specified for your detection weights, but cannot find this column in the samples datafarme!")
+
+            # get *\alpha* for each model, defined as \int p(\theta|\lambda) Pdet(\theta) d\theta
+            if sensitivity is not None:
+                # if cosmological weights are provided, do mock draws from the pop
+                if 'weight' in sbml_samps.keys():
+                    mock_samp = sbml_samps.sample(int(1e6), weights=(sbml_samps['weight']/len(sbml_samps)), replace=True)
+                else:
+                    mock_samp = sbml_samps.sample(int(1e6), replace=True)
+                alpha[dict_key]=np.sum(mock_samp['pdet_'+sensitivity]) / len(mock_samp)
+            else:
+                alpha[dict_key]=1.0
+
+            ### GET WEIGHTS ###
+            # if cosmological weights are provided...
+            if 'weight' in sbml_samps.keys():
+                cosmo_weights[dict_key] = np.asarray(sbml_samps['weight']) 
+            else:
+                cosmo_weights[dict_key] = np.ones(len(sbml_samps))
+
+            # Normalise the cosmological weights. If wanted detection weighted samples, cosmo weigths could be combined with pdets
+            if (cosmo_weights[dict_key] is not None):
+                combined_weights[dict_key] = (cosmo_weights[dict_key] / np.sum(cosmo_weights[dict_key]))
+            else:
+                combined_weights[dict_key] = np.ones(len(sbml_samps))
+        return FlowModel(channel, samples, params, flow_path, channel_hyperparams, combined_weights, alpha, device=device)
 
 
-    def __init__(self, channel, samples, params, flow_path, sensitivity, device):
+    def __init__(self, channel, samples, param_dict, flow_path, channel_hyperparams, combined_weights, alpha, device):
         """
         Initialisation for FlowModel object. Sets self.flow as instance of Nflow class, of which FlowModel is wrapper of that object.
 
@@ -111,123 +156,39 @@ class FlowModel(Model):
         super()
         self.channel_label = channel
         self.samples = samples
-        self.params = params
-        self.sensitivity = sensitivity
 
-        #initialises list of population hyperparameter values
-        self.hps = [[0.,0.1,0.2,0.5]]
-        self.param_bounds = [_param_bounds[param] for param in self.params]
+        #want this to be structured {'mchirp':{'bounds':(0,100.), 'max':(100.)}, 'q':{...}, 'chieff:{...}}
+        self.param_dict = param_dict
+        #i think we don't need the below: instead we can loop thru param_dict
+        #self.params = self.param_dict["keys"]
+        #self.param_bounds = self.param_dict["bounds"]
 
-        #additional alpha dimension for CE channel, else dummy dimension
-        if self.channel_label=='CE':
-            self.hps.append([0.2,0.5,1.,2.,5.])
-        else:
-            self.hps.append([1])
+        #initialises list of population hyperparameters from model keys
+        self.hyperparam_models = channel_hyperparams["keys"]
+        self.hp_vals = channel_hyperparams["values"]
+
+        #retrieve hyperparameter values from model keys
+        #TO CHANGE - NEEDS GENERALISING, currently assumes values are last 2 digits of model keys /10
+        #self.hp_vals = []
+        """for d, dim in enumerate(self.hyperparam_models):
+            self.hp_vals.append([])
+            for smdl in dim:
+                self.hp_vals[d].append(float(smdl[-2:])/10)"""
         
         #number of binary parameters
         self.no_params = np.shape(params)[0]
         #dimensionailty of non-branching ratio hyperparameters
-        self.conditionals = 2 if self.channel_label =='CE' else 1
+        self.conditionals = len(self.hyperparam_models)
 
-        #initialise dictionaries of alpha, cosmo_weights, pdet, optimal_snrs, and combined_weights for each submodel
-        alpha = dict.fromkeys(samples.keys())
-        cosmo_weights= dict.fromkeys(samples.keys())
-        pdets= dict.fromkeys(samples.keys())
-        optimal_snrs= dict.fromkeys(samples.keys())
-        combined_weights= dict.fromkeys(samples.keys())
-
-        #loop over submodels
-        for chib_id, chib in enumerate(self.hps[0]):
-            for alphaid, alphaCE in enumerate(self.hps[1]):
-
-                #grab samples for each submodel depending on how many hyperparameter dimensions there are (CE vs non-CE)
-                if self.channel_label=='CE':
-                    sbml_samps = samples[chib_id,alphaid]
-                    key = chib_id,alphaid
-                else:
-                    sbml_samps = samples[chib_id]
-                    key= chib_id
-
-                #check that defined sensitivity exists in submodel dataframe
-                if sensitivity is not None:
-                    if 'pdet_'+sensitivity not in sbml_samps.columns:
-                        raise ValueError("{0:s} was specified for your detection weights, but cannot find this column in the samples datafarme!")
-
-                # get *\alpha* for each model, defined as \int p(\theta|\lambda) Pdet(\theta) d\theta
-                if sensitivity is not None:
-                    # if cosmological weights are provided, do mock draws from the pop
-                    if 'weight' in sbml_samps.keys():
-                        mock_samp = sbml_samps.sample(int(1e6), weights=(sbml_samps['weight']/len(sbml_samps)), replace=True)
-                    else:
-                        mock_samp = sbml_samps.sample(int(1e6), replace=True)
-                    alpha[key]=np.sum(mock_samp['pdet_'+sensitivity]) / len(mock_samp)
-                else:
-                    alpha[key]=1.0
-
-                ### GET WEIGHTS ###
-                # if cosmological weights are provided...
-                if 'weight' in sbml_samps.keys():
-                    cosmo_weights[key] = np.asarray(sbml_samps['weight'])
-                else:
-                    cosmo_weights[key] = np.ones(len(sbml_samps))
-                # if detection weights are provided...
-                if sensitivity is not None:
-                    pdets[key] = np.asarray(sbml_samps['pdet_'+sensitivity])
-                else:
-                    pdets[key] = np.ones(len(sbml_samps))
-
-                # get optimal SNRs for this sensitivity
-                if sensitivity is not None:
-                    optimal_snrs[key] = np.asarray(sbml_samps['snropt_'+sensitivity])
-                else:
-                    optimal_snrs[key] = np.nan*np.ones(len(sbml_samps))
-
-
-                # Normalise the cosmological weights. If wanted detection weighted samples, cosmo weigths could be combined with pdets
-                if (cosmo_weights[key] is not None):
-                    combined_weights[key] = (cosmo_weights[key] / np.sum(cosmo_weights[key]))
-                else:
-                    combined_weights[key] = np.ones(len(sbml_samps))
-
-        #sets weights as class properties
+        #set weights as class properties
         self.combined_weights = combined_weights
-        self.pdets = pdets
-        self.optimal_snrs = optimal_snrs
         self.alpha = alpha
-        self.cosmo_weights = cosmo_weights
-        
-        #Load flow network parameters from config file if it exists
-        if os.path.isfile(f'{flow_path}flowconfig.json'):
-            with open(f'{flow_path}flowconfig.json', 'r') as f:
-                config = json.load(f)
-        else:
-            config = {}
-
-        if self.channel_label in list(config.keys()):
-            self.no_trans = config[self.channel_label]['transforms']
-            self.no_neurons = config[self.channel_label]['neurons']
-            self.no_bins = config[self.channel_label]['bins']
-        else:
-            self.no_trans = 6
-            self.no_neurons = 128
-            self.no_bins=4
-            if self.channel_label=='CE' or self.channel_label=='NSC':
-                self.no_bins=5
-
-        batch_size=10000
 
         #initialise the channel of this flow and how many training submodels exist for this channel
-        self.total_hps = np.shape(self.hps[0])[0]*np.shape(self.hps[1])[0]
-        channel_ids = {'CE':0, 'CHE':1,'GC':2,'NSC':3, 'SMT':4}
-        self.channel_id = channel_ids[self.channel_label] #will be 0, 1, 2, 3, or 4
-
-        #initislises flow network
-        flow = NFlow(self.no_trans, self.no_neurons, self.no_params, self.conditionals, batch_size, 
-                    self.total_hps, self.channel_label, RNVP=False, device=device, no_bins=self.no_bins)
-        self.flow = flow
+        self.total_smdls = len(model_keys)
 
 
-    def map_samples(self, samples, params, filepath, testCEsmdl=False):
+    def map_samples(self, filepath):
         """
         Maps samples with logistic mapping (mchirp, q, z samples) and tanh (chieff).
         Stacks data by [mchirp,q,chieff,z,weight,chi_b,(alpha)].
@@ -262,83 +223,66 @@ class FlowModel(Model):
 
         print('Mapping population synthesis samples for training...')
         
-
-        if self.channel_label != 'CE':
-            #Channels with 1D hyperparameters: SMT, GC, NSC, CHE
-
-
-            #measure no_samples in models and identify samples with weights below fmin
-            model_size = np.zeros(self.no_params)
-            cumulsize = np.zeros(self.no_params)
-            weights_idxs = []
-            
-            for chib_id, xb in enumerate(self.hps[0]):
-                weights_temp=np.asarray(self.combined_weights[(chib_id)])
-                weights_idxs.append(np.argwhere((weights_temp) > np.finfo(np.float32).tiny))
-                model_size[chib_id] = np.shape(weights_idxs[chib_id])[0]
-                cumulsize[chib_id] = np.sum(model_size)
-
-            self.no_binaries = int(cumulsize[-1])
-            models = np.zeros((self.no_binaries, self.no_params))
-            weights = np.zeros((self.no_binaries, 1))
-            cumulsize = np.append(cumulsize, 0)
-
-            #moves binary parameter samples and weights from dictionaries into array
-            for chib_id, xb in enumerate(self.hps[0]):
-                models[int(cumulsize[chib_id-1]):int(cumulsize[chib_id])]=np.reshape(np.asarray(samples[(chib_id)][params])[weights_idxs[chib_id]],(-1,len(params)))
-                weights[int(cumulsize[chib_id-1]):int(cumulsize[chib_id])]=np.asarray(self.combined_weights[(chib_id)])[weights_idxs[chib_id]]
-
-            models_stack = np.copy(models)
-
-            #map samples with logistic mapping before dividing into training and validation data
-
-            #mchirp
-            models_stack[:,0], max_logit_mchirp, max_mchirp = self.logistic(models_stack[:,0],wholedataset=True, \
-                rescale_max=self.param_bounds[0][1])
-
-            #q
-            if self.channel_id == 2:
-                #add extra tiny amount to GC mass ratios as q=1 samples exist
-                models_stack[:,1], max_logit_q, max_q = self.logistic(models_stack[:,1],wholedataset=True, \
-                rescale_max=self.param_bounds[1][1]+0.001)
+        #measure no_samples in models and identify samples with weights below fmin
+        model_size = np.zeros(self.total_smdls)
+        cumulsize = np.zeros(self.total_smdls)
+        weights_idxs = []
+        
+        for i, model_idxs in enumerate(self.model_keys):
+            #find corresponding submodel key
+            if model_idxs.ndim > 0:
+                dict_key = tuple(model_idxs)
             else:
-                models_stack[:,1], max_logit_q, max_q = self.logistic(models_stack[:,1],wholedataset=True, \
-                rescale_max=self.param_bounds[1][1])
+                dict_key = model_idxs
 
-            #chieff
-            models_stack[:,2] = np.arctanh(models_stack[:,2])
+            weights_temp=np.asarray(self.combined_weights[dict_key])
+            weights_idxs.append(np.argwhere((weights_temp) > np.finfo(np.float32).tiny))
+            model_size[i] = np.shape(weights_idxs[i])[0]
+            cumulsize[i] = np.sum(model_size)
 
-            #z
-            models_stack[:,3],max_logit_z, max_z = self.logistic(models_stack[:,3],wholedataset=True, \
-                rescale_max=self.param_bounds[3][1])
+        self.no_binaries = int(cumulsize[-1])
+        models = np.zeros((self.no_binaries, self.no_params))
+        weights = np.zeros((self.no_binaries, 1))
+        cumulsize = np.append(cumulsize, 0)
+
+        #moves binary parameter samples and weights from dictionaries into array
+        for i, model_idxs in enumerate(self.model_keys):
+            models[int(cumulsize[i-1]):int(cumulsize[i])]=np.reshape(np.asarray(self.samples[model_idxs][params])[weights_idxs[i]],(-1,len(params)))
+            weights[int(cumulsize[i-1]):int(cumulsize[i])]=np.asarray(self.combined_weights[model_idxs])[weights_idxs[i]]
+
+        models_stack = np.copy(models)
+
+        #map samples with logistic mapping before dividing into training and validation data
+
+        mappings = dict(fromkeys(params,{'logit_max', 'max'})
+
+        for pidx, param in enumerate(self.param_dict):
+            models_stack[:,pidx], mappings['logit_max'], mappings['max'] = self.logistic(models_stack[:,pidx],wholedataset=True, \
+                rescale_max=self.param_dict[param]['bounds'][1])
             
-            #repeat subpopulation hyperparameter values no samples times for each subpopulation
-            #then split the training data, conditional data, and sample weights into training and validation sets
-            training_hps_stack = np.repeat(self.hps[0], (model_size).astype(int), axis=0)
-            training_hps_stack = np.reshape(training_hps_stack,(-1,self.conditionals))
-            weights = np.reshape(weights,(-1,1))
-            train_models_stack, validation_models_stack, train_weights, validation_weights, training_hps_stack, validation_hps_stack = \
-                    train_test_split(models_stack, weights, training_hps_stack, shuffle=True, train_size=0.8)
+        #repeat subpopulation hyperparameter values Nsamps times for each subpopulation
+        hp_combos = np.squeeze(list(product(*self.hps)))
+        hps_stack = np.repeat(training_hps, (model_size).astype(int), axis=0)
+
+        #reshape conditionals and weights
+        hps_stack = np.reshape(hps_stack,(-1,self.conditionals))
+        weights = np.reshape(weights,(-1,1))
+
+        #split the training data, conditional data, and sample weights into training and validation sets
+        train_models_stack, validation_models_stack, train_weights, validation_weights, training_hps_stack, validation_hps_stack = \
+                train_test_split(models_stack, weights, hps_stack, shuffle=True, train_size=0.8)
             
-        else:
+        """else:
             #CE channel with alpha_CE parameter
 
-            #sets test population to remove, test_model_id is the model indices of the removed population
-            if testCEsmdl:
-                test_model_id = [1,2]
-                test_model_id_flat = 7
-
             #tile list of chi_bs and alpha_CEs into liost for each training sub-population
-            chi_b_alpha_pairs= np.zeros((self.total_hps, 2))
+            chi_b_alpha_pairs= np.zeros((self.total_smdls, 2))
             chi_b_alpha_pairs[:,0] = np.repeat(self.hps[0],np.shape(self.hps[1])[0])
             chi_b_alpha_pairs[:,1] = np.tile(np.log(self.hps[1]), np.shape(self.hps[0])[0])
-            if testCEsmdl:
-                chi_b_alpha_pairs = np.delete(chi_b_alpha_pairs, test_model_id_flat, axis=0)
-                self.total_hps = self.total_hps - 1
 
             #initialise arrays for model size
             model_size = np.zeros((4,5))
-            cumulsize = np.zeros(self.total_hps)
+            cumulsize = np.zeros(self.total_smdls)
             weights_idxs = []
 
             #meaure no samples in each population, and the cumulative samples in each population used for training
@@ -371,11 +315,6 @@ class FlowModel(Model):
                     weights[int(cumulsize[i-1]):int(cumulsize[i])]=np.reshape(np.asarray(self.combined_weights[(chib_id, alpha_id)])[weights_idxs[i]],(-1,1))
                     i+=1
 
-            #reshape the model size array to be 1D
-            flat_model_size = np.reshape(model_size, 20)
-            if testCEsmdl:
-                flat_model_size = np.delete(flat_model_size, test_model_id_flat)
-
             #repeat the pairs of [chi_b, alphaCE] for the number of samples in the training samples
             all_chi_b_alphas = np.repeat(chi_b_alpha_pairs, (flat_model_size).astype(int), axis=0)
 
@@ -405,7 +344,7 @@ class FlowModel(Model):
 
         #concatenate data and weights and hyperparams
         training_data = np.concatenate((train_models_stack, train_weights, training_hps_stack), axis=1)
-        val_data = np.concatenate((validation_models_stack, validation_weights, validation_hps_stack), axis=1)
+        val_data = np.concatenate((validation_models_stack, validation_weights, validation_hps_stack), axis=1)"""
 
         #save mapping constants in flow model directory
         mappings = np.asarray([max_logit_mchirp, max_mchirp, max_logit_q, max_q, max_logit_z, max_z])
@@ -428,19 +367,15 @@ class FlowModel(Model):
         samps : array
             samples in shape [N, no_params]
         """
-        #log alphaCE
-        if self.channel_label =='CE':
-            conditional[1] = np.log(conditional[1])
         
         #sample from flow - this returns samples in the logistically mapped space
         logit_samps = self.flow.sample(conditional,N)
 
         #map samples back from logit space
         samps = np.zeros(np.shape(logit_samps))
-        samps[:,0] = self.expistic(logit_samps[:,0], self.mappings[0], self.mappings[1])
-        samps[:,1] = self.expistic(logit_samps[:,1], self.mappings[2], self.mappings[3])
-        samps[:,2] = np.tanh(logit_samps[:,2])
-        samps[:,3] = self.expistic(logit_samps[:,3], self.mappings[4], self.mappings[5])
+        for pidx, param in enumerate(self.param_dict):
+            samps[:,pidx] = self.expistic(logit_samps[:,pidx], self.param_dict[param]['mappings'][0], self.param_dict[param]['mappings'][1])
+
         return samps
 
     def __call__(self, data, conditional_hps, smallest_N, prior_pdf=None):
@@ -524,12 +459,8 @@ class FlowModel(Model):
         samps mapped to latent space
         """
 
-        #logs alphaCE
         conditional = np.asarray(conditional)
-        if self.channel_label =='CE':
-            conditional[1] = np.log(conditional[1])
         
-
         #maps observations into the logistically mapped space
         mapped_obs = self.map_obs(samps)
 
@@ -560,10 +491,8 @@ class FlowModel(Model):
         mapped_data = np.zeros((np.shape(data)[0],np.shape(data)[1],np.shape(data)[2]))
 
         #compute logistic mappings of data
-        mapped_data[:,:,0],_,_= self.logistic(data[:,:,0], False, max=self.mappings[0], rescale_max=self.mappings[1])
-        mapped_data[:,:,1],_,_= self.logistic(data[:,:,1], False, max=self.mappings[2], rescale_max=self.mappings[3])
-        mapped_data[:,:,2]= np.arctanh(data[:,:,2])
-        mapped_data[:,:,3],_,_= self.logistic(data[:,:,3], False, max=self.mappings[4], rescale_max=self.mappings[5])
+        for pidx, param in enumerate(self.param_dict):
+            mapped_data[:,:,pidx] = self.logistic(data[:,:,pidx], False, self.param_dict[param]['mappings'][0], self.param_dict[param]['mappings'][1])
 
         return mapped_data
 
@@ -646,7 +575,7 @@ class FlowModel(Model):
             data *=rescale_max
         return(data)
 
-    def train(self, no_trans, no_bins, no_neurons, lr, epochs, batch_no, filepath, testCEsmdl, use_wandb=False):
+    def train(self, no_trans, no_neurons, no_blocks, no_bins, lr, epochs, batch_no, filepath):
         """
         Trains the normalising flow with certain configuration of flow network parameters.
         Saves these network parameters to a json config file, and saves flow post training
@@ -672,11 +601,17 @@ class FlowModel(Model):
         """
 
         #write or append channel config to json file
-        channel_config = {'transforms':no_trans, 'neurons':no_neurons,'bins':no_bins}
+        channel_config = {'transforms':no_trans, 'neurons':no_neurons,'blocks':no_blocks,'bins':no_bins}
+
+        self.no_trans = channel_config['transforms']
+        self.no_neurons = channel_config['neurons']
+        self.no_blocks = channel_config['blocks']
+        self.no_bins = channel_config['bins']
+
         channel_json = {}
         channel_json[self.channel_label] = channel_config
 
-        #check if config exists e.g. for other channels
+        #check if config exists e.g. for other channels, and update this channel to current config
         if os.path.isfile(f'{filepath}flowconfig.json'):
             with open(f'{filepath}flowconfig.json', 'r') as f:
                 old_config = json.load(f)
@@ -687,8 +622,15 @@ class FlowModel(Model):
         with open(f'{filepath}flowconfig.json', 'w') as f:
             json.dump(channel_json, f)
 
+        #TO CHANGE - make this a settable parameter
+        batch_size=10000
+
+        #initislises flow network
+        self.flow = NFlow(self.no_trans, self.no_neurons, self.no_blocks, self.no_bins, self.no_params, self.conditionals, batch_size, 
+                    self.total_smdls, RNVP=False, device=device)
+
         #map the training samples etc 
-        training_data, val_data, self.mappings = self.map_samples(self.samples, self.params, filepath, testCEsmdl)
+        training_data, val_data, self.mappings = self.map_samples(filepath)
 
         save_filename = f'{filepath}{self.channel_label}'
         #train the normalising flow
@@ -707,12 +649,16 @@ class FlowModel(Model):
         if os.path.isfile(f'{filepath}flowconfig.json'):
             with open(f'{filepath}flowconfig.json', 'r') as f:
                 config = json.load(f)
+            self.no_trans = config[self.channel_label]['transforms']
             self.no_neurons = config[self.channel_label]['neurons']
+            self.no_blocks = config[self.channel_label]['blocks']
             self.no_bins = config[self.channel_label]['bins']
             batch_size=10000
+        else:
+            print("no config available")
 
-            self.flow = NFlow(self.no_trans, self.no_neurons, self.no_params, self.conditionals, batch_size,\
-                self.total_hps, self.channel_label, RNVP=False, device=device, no_bins=self.no_bins)
+        self.flow = NFlow(self.no_trans, self.no_neurons, self.no_blocks, self.no_bins, self.no_params, self.conditionals, batch_size,\
+            self.total_smdls, self.channel_label, RNVP=False, device=device)
         
         #load in actual flow model, and mappings
         self.flow.load_model(f'{filepath}{self.channel_label}.pt')
@@ -752,69 +698,3 @@ class FlowModel(Model):
             #return alpha at specified chi_b
             alpha = np.exp(alpha_interp([hyperparams[0]]))
         return alpha
-
-
-    def wandb_init(self, epochs):
-        """
-        Initialises a wandb sweep and then uses a wandb agent to train a flow under that sweeps regimes
-        current process optimises the number of epochs over validation loss, 
-        the prior for the number of epochs being uniform between argument's number of epochs and 3*args.epochs
-        """
-        #setting up wandb sweep parameters
-
-        sweep_config = {
-            'method': 'bayes'
-            }
-
-        metric = {
-            'name': 'val_loss',
-            'goal': 'minimize'   
-            }
-
-        sweep_config['metric'] = metric
-
-        parameters_dict = {
-            'lr': {
-                'value':0.001
-            },
-            'epochs': {
-                'value':10000
-            },
-            'batch_no': {
-                'value':10
-            },
-            'no_trans': {
-                'distribution': 'int_uniform',
-                'min': 4,
-                'max': 10
-            },
-            'no_neurons': {
-                'distribution': 'int_uniform',
-                'min': 12,
-                'max': 128
-            },
-            'no_bins': {
-                'distribution': 'int_uniform',
-                'min': 3,
-                'max': 8
-            }                
-            }
-
-        sweep_config['parameters'] = parameters_dict
-
-        sweep_id = wandb.sweep(sweep_config, project=f"{self.channel_label}_transneubins_sweep")
-        
-        wandb.agent(sweep_id, self.wandbtrain, count=20)
-    
-    def wandbtrain(self, config=None):
-        with wandb.init(config=config):
-            config = wandb.config
-
-            batch_size=10000
-            total_hps = np.shape(self.hps[0])[0]*np.shape(self.hps[1])[0]
-            device='cuda:0'
-
-            flow = NFlow(config.no_trans, config.no_neurons, self.no_params, self.conditionals, self.no_binaries, batch_size, 
-                    total_hps, self.channel_label, RNVP=False, device=device, no_bins=config.no_bins)
-            self.flow = flow
-            self.train(config.lr, config.epochs, config.batch_no, f"./wandb_models/{wandb.run.id}_wandb", self.channel_label, True)
