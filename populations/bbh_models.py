@@ -73,7 +73,7 @@ def read_hdf5(path, channel, channel_smdl_names, smdl_indxs_combos):
     return(popsynth_outputs)
 
 
-def get_models(file_path, channels, params, use_flows, sensitivity=None, normalize=False, detectable=False, device='cpu', flow_path=None, **kwargs):
+def get_models(file_path, channels, param_dict, use_flows, full_hyperparam_dict, sensitivity=None, normalize=False, detectable=False, device='cpu', flow_path=None, **kwargs):
     """
     Call this to get all the models and submodels, as well
     as KDEs of these models, packed inside of dictionaries labelled in the
@@ -158,10 +158,17 @@ def get_models(file_path, channels, params, use_flows, sensitivity=None, normali
             channel_smdls_split = np.array([x.split('/')[1:] for x in deepest_models if chnl+'/' in x])
             smdl_indices = [list(np.arange(hyperparam_pts_per_dim[i])) for i in range(channel_smdls_split.shape[1])]
             smdl_indxs_combos = np.squeeze(list(product(*smdl_indices)))
-            channel_hyperparams = [hyperparam_dict[i] for i in range(channel_smdls_split.shape[1])]
+
+            #currently list of lists of hyperparam model strings
+            #channel_hyperparams = [hyperparam_dict[i] for i in range(channel_smdls_split.shape[1])]
+            #instead want this, assuming hyperparam_dict contains values and keys:
+            channel_hyperparams = {}
+            for hp in full_hyperparam_dict:
+                if chnl in full_hyperparam_dict[hp]['channels']:
+                    channel_hyperparams[hp] = full_hyperparam_dict[hp]
 
             popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos)
-            flow_models[chnl] = FlowModel.from_samples(chnl, popsynth_outputs, params, channel_hyperparams, smdl_indxs_combos, device=device, sensitivity=sensitivity, flow_path=flow_path)
+            flow_models[chnl] = FlowModel.from_samples(chnl, popsynth_outputs, param_dict, channel_hyperparams, smdl_indxs_combos, sensitivity=sensitivity, flow_path=flow_path)
         return deepest_models, flow_models
     else:
         kde_models = {}
@@ -175,7 +182,7 @@ def get_models(file_path, channels, params, use_flows, sensitivity=None, normali
                         # if we are on the last level, read in data and store kdes
                         df = pd.read_hdf(file_path, key=smdl)
                         label = '/'.join(smdl_list)
-                        mdl = KDEModel.from_samples(label, df, params, sensitivity=sensitivity, normalize=normalize, detectable=detectable, **kwargs)
+                        mdl = KDEModel.from_samples(label, df, list(param_dict.keys()), sensitivity=sensitivity, normalize=normalize, detectable=detectable, **kwargs)
                         current_level[part] = mdl
                     else:
                         current_level[part] = {}

@@ -11,6 +11,7 @@ import pdb
 import time
 import wandb
 import json
+from itertools import product
 
 import numpy as np
 import scipy as sp
@@ -22,6 +23,7 @@ from scipy.special import expit
 from sklearn.model_selection import train_test_split
 from .utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults
 from .utils.flow import NFlow
+
 
 from astropy import cosmology
 from astropy.cosmology import z_at_value
@@ -51,7 +53,7 @@ class Model(object):
 
 class FlowModel(Model):
     @staticmethod
-    def from_samples(channel, samples, params, channel_hyperparams, smdl_indxs_combos, flow_path, sensitivity=None, device='cpu'):
+    def from_samples(channel, samples, param_dict, channel_hyperparams, smdl_indxs_combos, flow_path, sensitivity=None):
         """
         Generate a Flow model instance from `samples`, where `params` are series in the `samples` dataframe. 
         
@@ -75,8 +77,6 @@ class FlowModel(Model):
             Desired detector sensitivity consistent with the string following the `pdet` and `snropt` columns in the population dataframes.
             Used to construct a detection-weighted population model, as well as for drawing samples from the underlying population
             to calculate the detection efficiency
-        deivce : str
-            Device on which to run the flow. Either is 'cpu', otherwise choose 'cuda:X' where X is the GPU slot.
         
         Returns
         ----------
@@ -84,14 +84,14 @@ class FlowModel(Model):
         """
 
         #set model keys for specified training data
-        self.model_keys = smdl_indxs_combos
+        model_keys = smdl_indxs_combos
 
         #initialise dictionaries of alpha, cosmo_weights, pdet, optimal_snrs, and combined_weights for each submodel
         alpha = dict.fromkeys(samples.keys())
         cosmo_weights= dict.fromkeys(samples.keys())
         combined_weights= dict.fromkeys(samples.keys())
 
-        for model_idxs in self.model_keys:
+        for model_idxs in model_keys:
             #grab samples for each submodel according to key in samples dict
             if model_idxs.ndim > 0:
                 dict_key = tuple(model_idxs)
@@ -127,10 +127,10 @@ class FlowModel(Model):
                 combined_weights[dict_key] = (cosmo_weights[dict_key] / np.sum(cosmo_weights[dict_key]))
             else:
                 combined_weights[dict_key] = np.ones(len(sbml_samps))
-        return FlowModel(channel, samples, params, flow_path, channel_hyperparams, combined_weights, alpha, device=device)
+        return FlowModel(channel, samples, param_dict, flow_path, channel_hyperparams, combined_weights, alpha, model_keys)
 
 
-    def __init__(self, channel, samples, param_dict, flow_path, channel_hyperparams, combined_weights, alpha, device):
+    def __init__(self, channel, samples, param_dict, flow_path, channel_hyperparams, combined_weights, alpha, model_keys):
         """
         Initialisation for FlowModel object. Sets self.flow as instance of Nflow class, of which FlowModel is wrapper of that object.
 
@@ -145,10 +145,6 @@ class FlowModel(Model):
             subset of [mchirp, q, chieff, z]
         flow_path : str
             directory of the flow models to load network config from if config file exists
-        sensitivity : str
-            Desired detector sensitivity consistent with the string following the `pdet` and `snropt` columns in the population dataframes.
-            Used to construct a detection-weighted population model, as well as for drawing samples from the underlying population
-            to calculate the detection efficiency
         deivce : str
             Device on which to run the flow. default is 'cpu', otherwise choose 'cuda:X' where X is the GPU slot.
         """
@@ -159,24 +155,16 @@ class FlowModel(Model):
 
         #want this to be structured {'mchirp':{'bounds':(0,100.), 'max':(100.)}, 'q':{...}, 'chieff:{...}}
         self.param_dict = param_dict
-        #i think we don't need the below: instead we can loop thru param_dict
-        #self.params = self.param_dict["keys"]
-        #self.param_bounds = self.param_dict["bounds"]
 
-        #initialises list of population hyperparameters from model keys
-        self.hyperparam_models = channel_hyperparams["keys"]
-        self.hp_vals = channel_hyperparams["values"]
-
-        #retrieve hyperparameter values from model keys
-        #TO CHANGE - NEEDS GENERALISING, currently assumes values are last 2 digits of model keys /10
-        #self.hp_vals = []
-        """for d, dim in enumerate(self.hyperparam_models):
-            self.hp_vals.append([])
-            for smdl in dim:
-                self.hp_vals[d].append(float(smdl[-2:])/10)"""
+        #initialises list of population hyperparameters from hyperparameter dictionary
+        self.hyperparam_models = []
+        self.hp_vals = []
+        for hp in channel_hyperparams:
+            self.hyperparam_models.append(channel_hyperparams[hp]["keys"])
+            self.hp_vals.append(channel_hyperparams[hp]["vals"])
         
         #number of binary parameters
-        self.no_params = np.shape(params)[0]
+        self.no_params = len(param_dict.keys())
         #dimensionailty of non-branching ratio hyperparameters
         self.conditionals = len(self.hyperparam_models)
 
@@ -185,6 +173,7 @@ class FlowModel(Model):
         self.alpha = alpha
 
         #initialise the channel of this flow and how many training submodels exist for this channel
+        self.model_keys = model_keys
         self.total_smdls = len(model_keys)
 
 
@@ -247,22 +236,29 @@ class FlowModel(Model):
 
         #moves binary parameter samples and weights from dictionaries into array
         for i, model_idxs in enumerate(self.model_keys):
-            models[int(cumulsize[i-1]):int(cumulsize[i])]=np.reshape(np.asarray(self.samples[model_idxs][params])[weights_idxs[i]],(-1,len(params)))
-            weights[int(cumulsize[i-1]):int(cumulsize[i])]=np.asarray(self.combined_weights[model_idxs])[weights_idxs[i]]
+            if model_idxs.ndim > 0:
+                dict_key = tuple(model_idxs)
+            else:
+                dict_key = model_idxs
+            models[int(cumulsize[i-1]):int(cumulsize[i])]=np.reshape(np.asarray(self.samples[dict_key][self.param_dict.keys()])[weights_idxs[i]],(-1,len(self.param_dict.keys())))
+            weights[int(cumulsize[i-1]):int(cumulsize[i])]=np.asarray(self.combined_weights[dict_key])[weights_idxs[i]]
 
         models_stack = np.copy(models)
-
         #map samples with logistic mapping before dividing into training and validation data
-
-        mappings = dict(fromkeys(params,{'logit_max', 'max'})
-
         for pidx, param in enumerate(self.param_dict):
-            models_stack[:,pidx], mappings['logit_max'], mappings['max'] = self.logistic(models_stack[:,pidx],wholedataset=True, \
-                rescale_max=self.param_dict[param]['bounds'][1])
+            if self.param_dict[param]['transf'] == 'logit':
+                models_stack[:,pidx], self.param_dict[param]['logit_max'], self.param_dict[param]['max'] = self.logistic(models_stack[:,pidx],\
+                    wholedataset=True, rescale_max=self.param_dict[param]['bounds'][1])
+            elif self.param_dict[param]['transf'] == 'tanh':
+                models_stack[:,pidx] = np.arctanh(models_stack[:,pidx])
+            else:
+                print(f'No transformation type specified for {param} dimension, attempting logistic transform')
+                models_stack[:,pidx], self.param_dict[param]['logit_max'], self.param_dict[param]['max'] = self.logistic(models_stack[:,pidx],\
+                    wholedataset=True, rescale_max=self.param_dict[param]['bounds'][1])
             
         #repeat subpopulation hyperparameter values Nsamps times for each subpopulation
-        hp_combos = np.squeeze(list(product(*self.hps)))
-        hps_stack = np.repeat(training_hps, (model_size).astype(int), axis=0)
+        hp_combos = np.squeeze(list(product(*self.hp_vals)))
+        hps_stack = np.repeat(hp_combos, (model_size).astype(int), axis=0)
 
         #reshape conditionals and weights
         hps_stack = np.reshape(hps_stack,(-1,self.conditionals))
@@ -271,86 +267,12 @@ class FlowModel(Model):
         #split the training data, conditional data, and sample weights into training and validation sets
         train_models_stack, validation_models_stack, train_weights, validation_weights, training_hps_stack, validation_hps_stack = \
                 train_test_split(models_stack, weights, hps_stack, shuffle=True, train_size=0.8)
-            
-        """else:
-            #CE channel with alpha_CE parameter
-
-            #tile list of chi_bs and alpha_CEs into liost for each training sub-population
-            chi_b_alpha_pairs= np.zeros((self.total_smdls, 2))
-            chi_b_alpha_pairs[:,0] = np.repeat(self.hps[0],np.shape(self.hps[1])[0])
-            chi_b_alpha_pairs[:,1] = np.tile(np.log(self.hps[1]), np.shape(self.hps[0])[0])
-
-            #initialise arrays for model size
-            model_size = np.zeros((4,5))
-            cumulsize = np.zeros(self.total_smdls)
-            weights_idxs = []
-
-            #meaure no samples in each population, and the cumulative samples in each population used for training
-            i=0
-            for chib_id in range(4):
-                for alpha_id in range(5):
-                    if testCEsmdl:
-                        if [chib_id, alpha_id] == test_model_id:
-                            continue
-                    weights_temp=np.asarray(self.combined_weights[(chib_id, alpha_id)])
-                    weights_idxs.append(np.argwhere((weights_temp) > np.finfo(np.float32).tiny))
-                    model_size[chib_id, alpha_id] = np.shape(weights_idxs[i])[0]
-                    cumulsize[i] = np.sum(model_size)
-                    i+=1
-
-            self.no_binaries = int(cumulsize[-1])
-            models = np.zeros((self.no_binaries, self.no_params))
-            weights = np.zeros((self.no_binaries,1))
-            cumulsize = np.append(cumulsize, 0)
-
-            #put samples from each model into array of shape [no_samples in channel, no params]
-            #and weights into array [no_samples in channel, 1]
-            i=0
-            for chib_id in range(4):
-                for alpha_id in range(5):
-                    if testCEsmdl:
-                        if [chib_id, alpha_id] == test_model_id:
-                            continue
-                    models[int(cumulsize[i-1]):int(cumulsize[i])]=np.reshape(np.asarray(samples[(chib_id, alpha_id)][params])[weights_idxs[i]],(-1,len(params)))
-                    weights[int(cumulsize[i-1]):int(cumulsize[i])]=np.reshape(np.asarray(self.combined_weights[(chib_id, alpha_id)])[weights_idxs[i]],(-1,1))
-                    i+=1
-
-            #repeat the pairs of [chi_b, alphaCE] for the number of samples in the training samples
-            all_chi_b_alphas = np.repeat(chi_b_alpha_pairs, (flat_model_size).astype(int), axis=0)
-
-
-            #scale parameters with logistic mapping, only for full range of parameters
-            models_stack = np.copy(models)
-
-            #chirp mass original range 0 to inf
-            models_stack[:,0], max_logit_mchirp, max_mchirp = self.logistic(models_stack[:,0], wholedataset=True, \
-                rescale_max=self.param_bounds[0][1])
-
-            #mass ratio - original range 0 to 1
-            models_stack[:,1], max_logit_q, max_q = self.logistic(models_stack[:,1], wholedataset=True, \
-                rescale_max=self.param_bounds[1][1])
-
-            #chieff - original range -1 to +1
-            models_stack[:,2] = np.arctanh(models_stack[:,2])
-
-            #redshift - original range 0 to inf
-            models_stack[:,3], max_logit_z, max_z = self.logistic(models_stack[:,3],wholedataset=True, \
-                rescale_max=self.param_bounds[3][1])
-
-            weights = np.reshape(weights,(-1,1))
-            train_models_stack, validation_models_stack, train_weights, validation_weights, training_hps_stack, validation_hps_stack = \
-                    train_test_split(models_stack, weights, all_chi_b_alphas, shuffle=True, train_size=0.8)
-
-
-        #concatenate data and weights and hyperparams
-        training_data = np.concatenate((train_models_stack, train_weights, training_hps_stack), axis=1)
-        val_data = np.concatenate((validation_models_stack, validation_weights, validation_hps_stack), axis=1)"""
-
-        #save mapping constants in flow model directory
-        mappings = np.asarray([max_logit_mchirp, max_mchirp, max_logit_q, max_q, max_logit_z, max_z])
-        np.save(f'{filepath}{self.channel_label}_mappings.npy',mappings)
         
-        return(training_data, val_data, mappings)
+        #concatenate training and validation data in order: samples, hyperparameters, weights
+        training_data = np.concatenate((train_models_stack, training_hps_stack, train_weights), axis=1)
+        val_data = np.concatenate((validation_models_stack, validation_hps_stack, validation_weights), axis=1)
+        
+        return(training_data, val_data)
 
     def sample(self, conditional, N=1):
         """
@@ -374,7 +296,7 @@ class FlowModel(Model):
         #map samples back from logit space
         samps = np.zeros(np.shape(logit_samps))
         for pidx, param in enumerate(self.param_dict):
-            samps[:,pidx] = self.expistic(logit_samps[:,pidx], self.param_dict[param]['mappings'][0], self.param_dict[param]['mappings'][1])
+            samps[:,pidx] = self.expistic(logit_samps[:,pidx], self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
 
         return samps
 
@@ -492,7 +414,7 @@ class FlowModel(Model):
 
         #compute logistic mappings of data
         for pidx, param in enumerate(self.param_dict):
-            mapped_data[:,:,pidx] = self.logistic(data[:,:,pidx], False, self.param_dict[param]['mappings'][0], self.param_dict[param]['mappings'][1])
+            mapped_data[:,:,pidx] = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
 
         return mapped_data
 
@@ -575,7 +497,7 @@ class FlowModel(Model):
             data *=rescale_max
         return(data)
 
-    def train(self, no_trans, no_neurons, no_blocks, no_bins, lr, epochs, batch_no, filepath):
+    def train(self, no_trans, no_neurons, no_blocks, no_bins, lr, epochs, batch_no, filepath, device):
         """
         Trains the normalising flow with certain configuration of flow network parameters.
         Saves these network parameters to a json config file, and saves flow post training
@@ -596,31 +518,16 @@ class FlowModel(Model):
             the number of samples to use for a batch of training
         filepath : str
             the directory to save the flow models and associated config
-        use_wandb : bool
-            whether or not to use Weights and Biases network optimisation to train the flow and track its loss etc
+        deivce : str
+            Device on which to run the flow. Either is 'cpu', otherwise choose 'cuda:X' where X is the GPU slot.
         """
 
-        #write or append channel config to json file
-        channel_config = {'transforms':no_trans, 'neurons':no_neurons,'blocks':no_blocks,'bins':no_bins}
+        #define flow hyperparams as class properties
+        self.no_trans = no_trans
+        self.no_neurons = no_neurons
+        self.no_blocks = no_neurons
+        self.no_bins = no_bins
 
-        self.no_trans = channel_config['transforms']
-        self.no_neurons = channel_config['neurons']
-        self.no_blocks = channel_config['blocks']
-        self.no_bins = channel_config['bins']
-
-        channel_json = {}
-        channel_json[self.channel_label] = channel_config
-
-        #check if config exists e.g. for other channels, and update this channel to current config
-        if os.path.isfile(f'{filepath}flowconfig.json'):
-            with open(f'{filepath}flowconfig.json', 'r') as f:
-                old_config = json.load(f)
-            old_config[self.channel_label] = channel_config
-            channel_json = old_config
-
-        #write this channels config to file
-        with open(f'{filepath}flowconfig.json', 'w') as f:
-            json.dump(channel_json, f)
 
         #TO CHANGE - make this a settable parameter
         batch_size=10000
@@ -630,11 +537,35 @@ class FlowModel(Model):
                     self.total_smdls, RNVP=False, device=device)
 
         #map the training samples etc 
-        training_data, val_data, self.mappings = self.map_samples(filepath)
+        training_data, val_data = self.map_samples(filepath)
+
+        #write or append channel config to json file
+        channel_config = {'transforms':no_trans, 'neurons':no_neurons,'blocks':no_neurons,'bins':no_bins}
+
+        #set mapping parameters into channel config
+        for param in self.param_dict:
+            if self.param_dict[param]['transf'] == 'logit':
+                channel_config[param] = {'logit_max':self.param_dict[param]['logit_max'], 'max':self.param_dict[param]['max']}
+
+        channel_json = {}
+        channel_json[self.channel_label] = channel_config
+
+        #check if config exists e.g. for other channels, and update this channel to current config
+        if os.path.isfile(f'{filepath}flowconfig.json'):
+            with open(f'{filepath}flowconfig.json', 'r') as f:
+                old_config = json.load(f)
+            #update the old config of this channel
+            old_config[self.channel_label] = channel_config
+            #load old config of other channels
+            channel_json = old_config
+
+        #write this channels config to file
+        with open(f'{filepath}flowconfig.json', 'w') as f:
+            json.dump(channel_json, f)
 
         save_filename = f'{filepath}{self.channel_label}'
         #train the normalising flow
-        self.flow.trainval(lr, epochs, batch_no, save_filename, training_data, val_data, use_wandb)
+        self.flow.trainval(lr, epochs, batch_no, save_filename, training_data, val_data)
 
     def load_model(self, filepath, device='cpu'):
         """
@@ -644,25 +575,32 @@ class FlowModel(Model):
         -------
         filepath : str
             directory with saved flow model and config
+        deivce : str
+            Device on which to run the flow. Either is 'cpu', otherwise choose 'cuda:X' where X is the GPU slot.
         """
         #load no. transforms, no. neurons and no. bins from config and reinitialise flow if config for flows exists
         if os.path.isfile(f'{filepath}flowconfig.json'):
             with open(f'{filepath}flowconfig.json', 'r') as f:
                 config = json.load(f)
+            #load flow hyperparameters
             self.no_trans = config[self.channel_label]['transforms']
             self.no_neurons = config[self.channel_label]['neurons']
             self.no_blocks = config[self.channel_label]['blocks']
             self.no_bins = config[self.channel_label]['bins']
-            batch_size=10000
+            #load parameter mapings
+            for param in self.param_dict:
+                if self.param_dict[param]['transf'] == 'logit':
+                    for key in ['logit_max', 'max']:
+                        self.param_dict[param][key] = config[self.channel_label][key]
         else:
-            print("no config available")
+            raise Exception("no config available")
 
+        batch_size=10000
         self.flow = NFlow(self.no_trans, self.no_neurons, self.no_blocks, self.no_bins, self.no_params, self.conditionals, batch_size,\
             self.total_smdls, self.channel_label, RNVP=False, device=device)
         
         #load in actual flow model, and mappings
         self.flow.load_model(f'{filepath}{self.channel_label}.pt')
-        self.mappings = np.load(f'{filepath}{self.channel_label}_mappings.npy', allow_pickle=True)
 
     def get_alpha(self, hyperparams):
         """
@@ -679,22 +617,13 @@ class FlowModel(Model):
             value of detection efficiency for specified [chi_b, {alpha_CE}]
         """
 
-        #reshape detection efficiency values onto 2D array or shape len(chi_b), len(alpha_CE) if CE channel
-        #len(alpha_CE)=1 for non-CE channels
-        alpha_grid = np.reshape(tuple(self.alpha.values()), (len(self.hps[0]),len(self.hps[1])))
+        #reshape detection efficiency values onto grid the shape of hyperparameter values
+        hp_grid_shape = [len(self.hyperparam_models[i]) for i in range(len(self.hyperparam_models))]
+        alpha_grid = np.reshape(tuple(self.alpha.values()), (hp_grid_shape))
 
-        #CE case with 2D interpolation
-        if self.channel_label == "CE":
-            #initialise interpolator over chi_b, log(alpha_CE) to interolate log(detection efficiency)
-            alpha_interp = sp.interpolate.RegularGridInterpolator((self.hps[0],np.log(self.hps[1])), np.log(alpha_grid),\
-                bounds_error=False, method='pchip', fill_value=None)
-            #find alpha at specified chi_b, log(alpha_CE)
-            alpha = np.exp(alpha_interp([hyperparams[0][0], hyperparams[0][1]]))
-
-        else:
-            #interpolate log alpha over chi_b values
-            alpha_interp = sp.interpolate.RegularGridInterpolator([self.hps[0]], np.log(np.reshape(alpha_grid, len(self.hps[0]))),\
+        #initialise interpolator over hyperparameters to interolate log(detection efficiency)
+        alpha_interp = sp.interpolate.RegularGridInterpolator((self.hp_vals), np.log(alpha_grid),\
             bounds_error=False, method='pchip', fill_value=None)
-            #return alpha at specified chi_b
-            alpha = np.exp(alpha_interp([hyperparams[0]]))
+        #find alpha at specified chi_b, log(alpha_CE)
+        alpha = np.exp(alpha_interp(hyperparams))
         return alpha
