@@ -296,7 +296,13 @@ class FlowModel(Model):
         #map samples back from logit space
         samps = np.zeros(np.shape(logit_samps))
         for pidx, param in enumerate(self.param_dict):
-            samps[:,pidx] = self.expistic(logit_samps[:,pidx], self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
+            if self.param_dict[param]['transf'] == 'logit':
+                samps[:,pidx] = self.expistic(logit_samps[:,pidx], self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
+            elif self.param_dict[param]['transf'] == 'tanh':
+                samps[:,pidx] = np.tanh(logit_samps[:,pidx])
+            else:
+                print(f'No transformation type specified for {param} dimension, attempting expistic transform')
+                samps[:,pidx] = self.expistic(logit_samps[:,pidx], self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
 
         return samps
 
@@ -414,7 +420,13 @@ class FlowModel(Model):
 
         #compute logistic mappings of data
         for pidx, param in enumerate(self.param_dict):
-            mapped_data[:,:,pidx] = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
+            if self.param_dict[param]['transf'] == 'logit':
+                mapped_data[:,:,pidx] = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
+            elif self.param_dict[param]['transf'] == 'tanh':
+                mapped_data[:,:,pidx] = np.arctanh(data[:,:,pidx])
+            else:
+                print(f'No transformation type specified for {param} dimension, attempting logistic transform')
+                mapped_data[:,:,pidx] = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
 
         return mapped_data
 
