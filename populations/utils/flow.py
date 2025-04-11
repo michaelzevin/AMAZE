@@ -75,7 +75,7 @@ class NFlow():
 
         self.network.to(device)
 
-    def trainval(self, lr, epochs, batch_no, filename, training_data, val_data, use_wandb):
+    def trainval(self, lr, epochs, batch_no, filename, training_data, val_data):
         """
         Train the normalising flow for the specified number of epochs using a set of training and validation data,
         and save the model with the best validation loss
@@ -94,8 +94,6 @@ class NFlow():
             set of training data points for the normlising flow
         val_data : array
             set of validation data points for the normlising flow
-        use_wandb : bool
-            If true, uses weights and biases to optimise neural network parameters
         """
         #set optimiser for flow, optimises flow parameters:
         #affine - s and t that shift and scale the transforms
@@ -167,10 +165,6 @@ class NFlow():
                     '\r Epoch: {} || Training loss: {} || Validation loss: {}'.format(
                     n+1, train_loss, total_val_loss))
             
-            #track losses for weights and biases
-            if use_wandb:
-                wandb.log({"train_loss": train_loss, "val_loss": total_val_loss, "unweighted_train_KL": unweighted_KL_train, "unweighted_val_KL": total_unweighted_KL_val})
-
             #copy the best flow model
             if total_val_loss < best_val_loss:
                 best_epoch = n
@@ -279,7 +273,7 @@ class NFlow():
 
         #retrieve dataspace samples, and corresponding hyperparameters and weights to the randomly drawn samples
         batched_samples = training_samples[random_sample_idxs,:self.no_params]
-        batched_hp_pairs = training_samples[random_sample_idxs, self.no_params:self.cond_inputs]
+        batched_hp_pairs = training_samples[random_sample_idxs, self.no_params:self.no_params+self.cond_inputs]
         batch_weights = training_samples[random_sample_idxs,-1]
 
         #reshape tensors to be correct shape
@@ -307,18 +301,18 @@ class NFlow():
         """
 
         #pull batch from data
-        random_samples = np.random.choice(np.shape(validation_data)[0], size=(int(self.batch_size)))
+        random_sample_idxs = np.random.choice(np.shape(validation_data)[0], size=(int(self.batch_size)))
 
         #retrieve dataspace samples, and corresponding hyperparameters and weights to the randomly drawn samples
         batched_samples = validation_data[random_sample_idxs,:self.no_params]
-        batched_hp_pairs = validation_data[random_sample_idxs, self.no_params:self.cond_inputs]
+        batched_hp_pairs = validation_data[random_sample_idxs, self.no_params:self.no_params+self.cond_inputs]
         batch_weights = validation_data[random_sample_idxs,-1]
 
         #reshape
-        xval=torch.from_numpy(validation_samples.astype(np.float32)).to(self.device)
-        xhyperparams = torch.from_numpy(validation_hp_pairs.astype(np.float32)).to(self.device)
+        xval=torch.from_numpy(batched_samples.astype(np.float32)).to(self.device)
+        xhyperparams = torch.from_numpy(batched_hp_pairs.astype(np.float32)).to(self.device)
         xhyperparams = xhyperparams.reshape(-1,self.cond_inputs)
-        xweights = torch.from_numpy(val_weights.astype(np.float32)).to(self.device)
+        xweights = torch.from_numpy(batch_weights.astype(np.float32)).to(self.device)
         return(xval, xhyperparams, xweights)
 
     def load_model(self,filename):
