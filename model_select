@@ -117,7 +117,7 @@ if use_flows==True:
     if verbose:
         print("\nReading models, applying transformations, and initializing underlying Normalising Flow models...\n")
     model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows, flow_path=args.flow_model_filename,\
-            sensitivity=args.sensitivity, device=args.device, detectable=False)
+            sensitivity=args.sensitivity, detectable=False)
 else:
     # Construct both "underlying" KDE models (anything that has Pdet>0) and "detectable" KDE models
     # `normalize` argument normalizes KDEs on unit cube
@@ -356,7 +356,7 @@ if use_flows==True:
                 pop_models[channel].wandb_init(int(args.epochs[i]))
             else:
                 pop_models[channel].train(int(args.no_trans[i]), int(args.spline_bins[i]), int(args.no_neurons[i]), lr[i], \
-                    int(args.epochs[i]), args.batch_no, args.flow_model_filename, args.testCEmodel, use_wandb)
+                    int(args.epochs[i]), args.batch_no, args.flow_model_filename, devicee=args.device)
         else:
             pop_models[channel].load_model(args.flow_model_filename, device=args.device)
 else:
