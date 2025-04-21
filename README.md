@@ -2,7 +2,7 @@
 A codebase for performing multi-channel inference using catalogs of compact binaries
 
 ### Authors:
-Storm Colloms, Michael Zevin, Chris Pankow
+Michael Zevin, Storm Colloms, April Cheng, Chris Pankow
   
   
 ### Papers:
