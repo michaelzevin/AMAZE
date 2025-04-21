@@ -11,8 +11,6 @@ https://ui.adsabs.harvard.edu/abs/2017ApJ...846...82Z/abstract
 
 https://ui.adsabs.harvard.edu/abs/2020arXiv201110057Z/abstract
 
-Colloms et al. 2025
-
 Why use one channel when you can use them all? `AMAZE` performs hierarchical inference on branching fractions between any number of population models, where each channel can also be parameterized by physical prescriptions. The executable `model_select` performs the inference, and has many options for including different channels, specifying whether to use mock observations or actual gravitational-wave observations, specifying the prescription for measurement uncertainty, etc. Run `python model_select --help` to learn more about all these options. 
 
 `AMAZE` can now train normalising flows to emulate the input population models, and use the normalising flows for discrete or continuous inference over the model hyperparameters. This currently allows for the population models from Zevin et al. 2020 as input; these models are available on Zenodo here: https://zenodo.org/record/4277620#.X7w28RNKjUI.
