@@ -26,8 +26,8 @@ class NFlow():
     #initialise flow with inputs, conditionals, including the type of network, real non-volume preserving,
     #or neural spline flow
     #spline flow increases the flexibility in the flow model
-    def __init__(self, no_trans, no_neurons, training_inputs, cond_inputs,
-                batch_size, total_hps, channel_label, RNVP=True, no_bins=4, device="cpu"):
+    def __init__(self, no_trans, no_neurons, no_blocks, no_bins, training_inputs, cond_inputs,
+                batch_size, total_smdls, RNVP=False, device="cpu"):
                 
         """
         Initialise Flow with inputed data, either RNVP or Spline flow.
@@ -38,49 +38,47 @@ class NFlow():
             number of transforms to give the flow
         no_neurons : int
             number of neurons of the flow per layer/transform
+        no_blocks : int
+            number of blocks
         training_inputs : int
             number of parameters in dataspace (binary parameters)
         cond_inputs : int
-            number of conditional population hyperparameters
+            number of population hyperparameters
         batch_size : int
             number of training and validation samples to use in each batch
-        total_hps : int
+        total_smdls : int
             total number of subpopulation models
-        channel_label : str
-            str corresponding to which formation channel this flow is for, e.g. 'CE'
-        RNVP : bool
-            whether or not to use realNVP flow, if False use spline
         num_bins : int
             number of bins to use for a spline flow
+        RNVP : bool
+            whether or not to use realNVP flow, if False use spline
         device : str
             device on which to run pytorch operations, default is CPU, otherwise GPU enabled with device = 'cuda:0'
         """
         self.no_params = training_inputs
         self.batch_size = batch_size
 
-        self.total_hps = total_hps
+        self.total_smdls = total_smdls
         self.cond_inputs = cond_inputs
 
-        self.channel = channel_label
         self.device = device # cuda:X where X is the slot of the GPU. run nvidia-smi in the terminal to see gpus
 
         if RNVP:
             self.network = RealNVP(n_inputs = training_inputs, n_conditional_inputs= cond_inputs,
-                                    n_neurons = no_neurons, n_transforms = no_trans, n_blocks_per_transform = 2,
+                                    n_neurons = no_neurons, n_transforms = no_trans, n_blocks_per_transform = no_blocks,
                                     linear_transform = None, batch_norm_between_transforms=True)
         else:
             self.network = CouplingNSF(n_inputs = training_inputs, n_conditional_inputs= cond_inputs,
                                         n_neurons = no_neurons, n_transforms = no_trans,
-                                        n_blocks_per_transform = 2, batch_norm_between_transforms=True,
+                                        n_blocks_per_transform = no_blocks, batch_norm_between_transforms=True,
                                         linear_transform = None, num_bins=no_bins)
 
         self.network.to(device)
 
-    #training and validation loop for the flow
-    def trainval(self, lr, epochs, batch_no, filename, training_data, val_data, use_wandb):
+    def trainval(self, lr, epochs, batch_no, filename, training_data, val_data):
         """
-        Train the normalising flow for the specified number of epochs, and save the model with the best 
-        validation loss
+        Train the normalising flow for the specified number of epochs using a set of training and validation data,
+        and save the model with the best validation loss
 
         Parameters
         ----------
@@ -96,8 +94,6 @@ class NFlow():
             set of training data points for the normlising flow
         val_data : array
             set of validation data points for the normlising flow
-        use_wandb : bool
-            If true, uses weights and biases to optimise neural network parameters
         """
         #set optimiser for flow, optimises flow parameters:
         #affine - s and t that shift and scale the transforms
@@ -169,10 +165,6 @@ class NFlow():
                     '\r Epoch: {} || Training loss: {} || Validation loss: {}'.format(
                     n+1, train_loss, total_val_loss))
             
-            #track losses for weights and biases
-            if use_wandb:
-                wandb.log({"train_loss": train_loss, "val_loss": total_val_loss, "unweighted_train_KL": unweighted_KL_train, "unweighted_val_KL": total_unweighted_KL_val})
-
             #copy the best flow model
             if total_val_loss < best_val_loss:
                 best_epoch = n
@@ -237,20 +229,25 @@ class NFlow():
         Parameters
         ----------
         coditional : array
-            [chi_b, alpha]
+            list/array of hyperparameter values to use as conditional values from which to sample from the flow, 
+            of shape [Nhyperparams]
         no_samples : int
             number of samples to take for each conditional
         
         Returns
         -------
         samples : array 
-            Flow samples in the logistically-mapped space of shape [no_samples, self.no_params]
+            Flow samples in the logistically-mapped space of shape [no_samples, Nparams]
         """
         samples = np.zeros((no_samples, self.no_params))
 
+        #check that requested conditional are the same shape as Nhyperparameters
+        if conditional.astype(np.float32).shape != self.cond_inputs:
+            raise ValueError(f"Expected shape {self.cond_inputs} but got {conditional.astype(np.float32).shape}")
+
         with torch.no_grad():
             conditional = torch.from_numpy(conditional.astype(np.float32))
-            #tile as many conditional chi_b alpha pairs as no samples
+            #tile as many conditional hyperparameter values as no samples
             conditional = conditional.tile(no_samples,1)
             samples = self.network.sample(no_samples, conditional=conditional)
 
@@ -271,19 +268,15 @@ class NFlow():
             the corersponding sample weigths to the batch of training data
             of shape [no_samples]
         """
-        #batched samples found, depending on the number of conditional samples in each model
-        if self.cond_inputs >=2:
-            random_samples = np.random.choice(np.shape(training_samples)[0],size=(int(self.batch_size)))
-            batched_hp_pairs = training_samples[random_samples,-2:]
-            batch_weights = training_samples[random_samples,-3]
-        else:
-            random_samples = np.random.choice(np.shape(training_samples)[0],size=(int(self.batch_size)))
-            batched_hp_pairs = training_samples[random_samples, -1]
-            batch_weights = training_samples[random_samples,-2]
+        #retrieve random samples of size batch_size from training samples
+        random_sample_idxs = np.random.choice(np.shape(training_samples)[0],size=(int(self.batch_size)))
 
-        batched_samples = training_samples[random_samples,:(self.no_params)]
+        #retrieve dataspace samples, and corresponding hyperparameters and weights to the randomly drawn samples
+        batched_samples = training_samples[random_sample_idxs,:self.no_params]
+        batched_hp_pairs = training_samples[random_sample_idxs, self.no_params:self.no_params+self.cond_inputs]
+        batch_weights = training_samples[random_sample_idxs,-1]
 
-        #reshape tensors
+        #reshape tensors to be correct shape
         xdata=torch.from_numpy(batched_samples.astype(np.float32)).to(self.device)
         xhyperparams = torch.from_numpy(batched_hp_pairs.astype(np.float32)).to(self.device)
         xhyperparams = xhyperparams.reshape(-1,self.cond_inputs)
@@ -306,23 +299,20 @@ class NFlow():
             the corersponding sample weigths to the batch of validation data
             of shape [no_samples]
         """
-        
-        #find weights from validation data
-        if self.cond_inputs >=2:
-            val_weights = validation_data[:,-3]
-        else:
-            val_weights = validation_data[:,-2]
 
         #pull batch from data
-        random_samples = np.random.choice(np.shape(validation_data)[0], size=(int(self.batch_size)))
-        val_weights = val_weights[random_samples]
-        validation_hp_pairs = validation_data[random_samples,-self.cond_inputs:]
-        validation_samples = validation_data[random_samples,:self.no_params]
+        random_sample_idxs = np.random.choice(np.shape(validation_data)[0], size=(int(self.batch_size)))
+
+        #retrieve dataspace samples, and corresponding hyperparameters and weights to the randomly drawn samples
+        batched_samples = validation_data[random_sample_idxs,:self.no_params]
+        batched_hp_pairs = validation_data[random_sample_idxs, self.no_params:self.no_params+self.cond_inputs]
+        batch_weights = validation_data[random_sample_idxs,-1]
+
         #reshape
-        xval=torch.from_numpy(validation_samples.astype(np.float32)).to(self.device)
-        xhyperparams = torch.from_numpy(validation_hp_pairs.astype(np.float32)).to(self.device)
+        xval=torch.from_numpy(batched_samples.astype(np.float32)).to(self.device)
+        xhyperparams = torch.from_numpy(batched_hp_pairs.astype(np.float32)).to(self.device)
         xhyperparams = xhyperparams.reshape(-1,self.cond_inputs)
-        xweights = torch.from_numpy(val_weights.astype(np.float32)).to(self.device)
+        xweights = torch.from_numpy(batch_weights.astype(np.float32)).to(self.device)
         return(xval, xhyperparams, xweights)
 
     def load_model(self,filename):
@@ -342,16 +332,15 @@ class NFlow():
         #dtheta prime by dtheta
         jac = torch.zeros(sample.shape[0], self.no_params).to(self.device)
 
-        jac[:,0] = mappings[1]/((sample[:,0])*(mappings[1]-(sample[:,0]))*mappings[0])
-        jac[:,1] = mappings[3]/((sample[:,1])*(mappings[3]-(sample[:,1]))*mappings[2])
-        jac[:,2] = 1/(1-sample[:,2]**2)
-        jac[:,3] = mappings[5]/((sample[:,3])*(mappings[5]-(sample[:,3]))*mappings[4])
+        #loop over number of params and add jacobian term, assuming all dimensions have undergone a logistic mapping
+        for i in range(self.no_params):
+            jac[:,i] = mappings[i+1]/((sample[:,i])*(mappings[i+1]-(sample[:,i]))*mappings[i])
         
         return torch.sum(torch.log(torch.abs(jac)), dim=1)
 
     def get_logprob(self, sample, mapped_sample, mappings, conditionals):
         """
-        get log_prob given a sample of [mchirp,q,chieff,z] given conditional hyperparameters
+        get log_prob p(theta|Lambda) given a sample of gw observables theta given conditional hyperparameters Lambda
 
         Parameters
         ----------
@@ -362,7 +351,7 @@ class NFlow():
             posterior samples mapped into logistic space with Nflow.map_obs function
             [Nobs x Nsamples x Nparams] shape array
         conditionals : array
-            values of hyperparameters chi_b and alpha_CE
+            values of population hyperparameters
             [Nobs x Nsamples x Nconditionals] shapped array
 
         Returns
@@ -396,8 +385,8 @@ class NFlow():
 
             log_prob = log_prob.cpu().numpy() 
             if np.any(np.isnan(log_prob)):
-                print('nans!')
-            log_prob[np.isnan(log_prob)] = -np.inf
+                sys.exit('Unexpected nans in log prob evaluation, quitting code.')
+                log_prob[np.isnan(log_prob)] = -np.inf
 
         return log_prob
 

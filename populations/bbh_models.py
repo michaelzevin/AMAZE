@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import h5py
 from tqdm import tqdm
+from itertools import product
 
 from . import *
 from .utils.transform import _DEFAULT_TRANSFORMS, _to_chieff, \
@@ -44,46 +45,8 @@ def get_params(df, params):
                 raise NameError("You specified the parameter {0:s} for inference, but it is not in your population data and you haven't written a transformation to calculate it!".format(param))
 
     return df
-    
-def get_model_keys(path, channel):
-    all_models = []
-    models = []
-    def find_submodels(name, obj):
-        if isinstance(obj, h5py.Dataset):
-            all_models.append(name.rsplit('/', 1)[0])
-            
-    f = h5py.File(path, 'r')
-    f.visititems(find_submodels)
-    # get all unique models
-    all_models = sorted(list(set(all_models)))
-    f.close()
 
-    # use only models with given alpha value
-    for model in all_models:
-        if channel in model:
-            models.append('/'+model)
-    return(np.array(models))
-
-def get_model_keys_CE(path):
-    all_models = []
-    models = []
-    def find_submodels(name, obj):
-        if isinstance(obj, h5py.Dataset):
-            all_models.append(name.rsplit('/', 1)[0])
-            
-    f = h5py.File(path, 'r')
-    f.visititems(find_submodels)
-    # get all unique models
-    all_models = sorted(list(set(all_models)))
-    f.close()
-
-    # use only models with given alpha value
-    for model in all_models:
-        if 'CE' in model:
-            models.append('/'+model)
-    return(np.split(np.array(models), 4))
-
-def read_hdf5(path, channel):
+def read_hdf5(path, channel, channel_smdl_names, smdl_indxs_combos):
     """
     For CE channel, returns diction of submodels for all chi_b and alpha_CE values, as keys i,j in dictionary
     For other channels, returns dictionary of submodels varying with chi_b for that channel
@@ -97,23 +60,20 @@ def read_hdf5(path, channel):
     Returns
     ----------
     popsynth_outputs: pandas dataframe
-        dataframe of samples from models hdf5 file, of param for each submodel in One channel (function input)
+        dataframe of samples from models hdf5 file, of param for each submodel.
     """
-    if channel=='CE':
-        popsynth_outputs = {}
-        models = np.asarray(get_model_keys_CE(path))
-        for i in range(models.shape[0]):
-            for j in range(models.shape[1]):
-                popsynth_outputs[i,j]=pd.read_hdf(path, key=models[i,j])
-    else:
-        popsynth_outputs = {}
-        models = np.asarray(get_model_keys(path, channel))
-        for i in range(len(models)):
-            popsynth_outputs[i]=pd.read_hdf(path, key=models[i])
+    popsynth_outputs = {}
+    #error handling for model keys for Nhyper>1, to set these to tuple type
+    for i, channel_smdl_name in enumerate(channel_smdl_names):
+        if smdl_indxs_combos[i].ndim > 0:
+            dict_key = tuple(smdl_indxs_combos[i])
+        else:
+            dict_key = smdl_indxs_combos[i]
+        popsynth_outputs[dict_key]=pd.read_hdf(path, key=channel_smdl_name)
     return(popsynth_outputs)
 
 
-def get_models(file_path, channels, params, use_flows, sensitivity=None, normalize=False, detectable=False, device='cpu', flow_path=None, **kwargs):
+def get_models(file_path, channels, param_dict, use_flows, full_hyperparam_dict, sensitivity=None, normalize=False, detectable=False, device='cpu', flow_path=None, **kwargs):
     """
     Call this to get all the models and submodels, as well
     as KDEs of these models, packed inside of dictionaries labelled in the
@@ -170,13 +130,45 @@ def get_models(file_path, channels, params, use_flows, sensitivity=None, normali
                     deepest_models_cut.append(mdl)
         deepest_models = deepest_models_cut
 
+    #find hyperparameters in models
+    hyperparam_dict  = {}
+    hyperidx=0
+    deepest_models.sort()
+    #list of model keys
+    hyperparams = sorted(list(set([x.split('/', 1)[1] for x in deepest_models])))
+    #total number of hyperparameters = maximum number of hyperparameters in any model
+    Nhyper = np.max([len(x.split('/')) for x in hyperparams])
+    
+    #construct hyperparam dict, with keys [0,..,Nhyper] and values the points in hyperparameter space with simulations
+    while hyperidx < Nhyper:
+        hyperidx_with_Nhyper = np.argwhere(np.asarray([len(x.split('/')) for x in hyperparams])>hyperidx).flatten()
+        hyperparams_at_level = sorted(set([x.split('/')[hyperidx] for x in np.asarray(hyperparams)[hyperidx_with_Nhyper]]))
+        hyperparam_dict[hyperidx] = hyperparams_at_level
+        hyperidx += 1
+    #length of the hyperparam dict for each dimension
+    hyperparam_pts_per_dim = [len(hyperparam_dict[x]) for x in range(Nhyper)]
+
     #KDE case: reads in submodel for each of the deepest model and sends to KDEModel
     #Flow case: reads in samples from all channels and sends to FlowModel
     if use_flows==True:
         flow_models = {}
         for i, chnl in enumerate(tqdm(channels)):
-            popsynth_outputs = read_hdf5(file_path, chnl)
-            flow_models[chnl] = FlowModel.from_samples(chnl, popsynth_outputs, params, device=device, sensitivity=sensitivity, flow_path=flow_path)
+            #find submodel keys, and indices they should correspond to in the input samples dict to the FlowModel
+            channel_smdls = [x for x in deepest_models if chnl+'/' in x]
+            channel_smdls_split = np.array([x.split('/')[1:] for x in deepest_models if chnl+'/' in x])
+            smdl_indices = [list(np.arange(hyperparam_pts_per_dim[i])) for i in range(channel_smdls_split.shape[1])]
+            smdl_indxs_combos = np.squeeze(list(product(*smdl_indices)))
+
+            #currently list of lists of hyperparam model strings
+            #channel_hyperparams = [hyperparam_dict[i] for i in range(channel_smdls_split.shape[1])]
+            #instead want this, assuming hyperparam_dict contains values and keys:
+            channel_hyperparams = {}
+            for hp in full_hyperparam_dict:
+                if chnl in full_hyperparam_dict[hp]['channels']:
+                    channel_hyperparams[hp] = full_hyperparam_dict[hp]
+
+            popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos)
+            flow_models[chnl] = FlowModel.from_samples(chnl, popsynth_outputs, param_dict, channel_hyperparams, smdl_indxs_combos, sensitivity=sensitivity, flow_path=flow_path)
         return deepest_models, flow_models
     else:
         kde_models = {}
@@ -190,7 +182,7 @@ def get_models(file_path, channels, params, use_flows, sensitivity=None, normali
                         # if we are on the last level, read in data and store kdes
                         df = pd.read_hdf(file_path, key=smdl)
                         label = '/'.join(smdl_list)
-                        mdl = KDEModel.from_samples(label, df, params, sensitivity=sensitivity, normalize=normalize, detectable=detectable, **kwargs)
+                        mdl = KDEModel.from_samples(label, df, list(param_dict.keys()), sensitivity=sensitivity, normalize=normalize, detectable=detectable, **kwargs)
                         current_level[part] = mdl
                     else:
                         current_level[part] = {}
