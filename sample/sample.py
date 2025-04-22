@@ -315,12 +315,14 @@ def lnlike_disc(x, data, pop_models, submodels_dict, channels, prior_pdf, use_fl
         if use_flows==True:
             smdl = pop_models[channel]
             #identify submodel conditional values
-            conditional_hps = [smdl.hps[i][hyperparam_idxs[i]] for i in range(smdl.conditionals)]
+            conditional_hps = [smdl.hp_vals[i][hyperparam_idxs[i]] for i in range(smdl.conditionals)]
             #LSE over channels
             lnprob = logsumexp([lnprob, np.log(beta) + smdl(data, conditional_hps, smallest_N, prior_pdf=prior_pdf)], axis=0)
             #for multiple hyperparameters, dictionary key is tuple, but for single hyperparameters, keys are ints
-            if hyperparam_idxs.ndim > 0:
+            if smdl.conditionals > 1:
                 hyperparam_idxs = tuple(hyperparam_idxs)
+            else:
+                hyperparam_idxs = hyperparam_idxs[0]
             alpha += beta * smdl.alpha[hyperparam_idxs]
         else:
             smdl = reduce(operator.getitem, model_list_tmp, pop_models) #grabs correct submodel
