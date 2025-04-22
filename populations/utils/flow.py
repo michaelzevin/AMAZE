@@ -322,7 +322,7 @@ class NFlow():
         self.network.load_state_dict(torch.load(filename, map_location=torch.device(self.device)))
         self.network.eval()
 
-    def log_jacobian(self,sample, mappings):
+    def log_jacobian(self,sample, param_dict):
         """
         Calculate the log jacobian term to add to the log likelihood to account for the logistic transforms
         of the samples of [mchirp, q, chieff, z]
@@ -332,13 +332,19 @@ class NFlow():
         #dtheta prime by dtheta
         jac = torch.zeros(sample.shape[0], self.no_params).to(self.device)
 
-        #loop over number of params and add jacobian term, assuming all dimensions have undergone a logistic mapping
-        for i in range(self.no_params):
-            jac[:,i] = mappings[i+1]/((sample[:,i])*(mappings[i+1]-(sample[:,i]))*mappings[i])
-        
+        #loop over number of params and add jacobian term, according to the type of transformation specified for that dimension
+        for i, param in enumerate(param_dict):
+            if param_dict[param]['transf'] == 'logit':
+                jac[:,i] = param_dict[param]['max']/((sample[:,i])*(param_dict[param]['max']-(sample[:,i]))*param_dict[param]['logit_max'])
+            elif param_dict[param]['transf'] == 'tanh':
+                jac[:,i] = 1/(1-sample[:,i]**2)
+            else:
+                print(f'No transformation type specified for {param} dimension, attempting jacobian calculate for logistic transform')
+                jac[:,i] = param_dict[param]['max']/((sample[:,i])*(param_dict[param]['max']-(sample[:,i]))*param_dict[param]['logit_max'])
+            
         return torch.sum(torch.log(torch.abs(jac)), dim=1)
 
-    def get_logprob(self, sample, mapped_sample, mappings, conditionals):
+    def get_logprob(self, sample, mapped_sample, param_dict, conditionals):
         """
         get log_prob p(theta|Lambda) given a sample of gw observables theta given conditional hyperparameters Lambda
 
@@ -378,7 +384,7 @@ class NFlow():
 
         with torch.no_grad():
             log_prob = self.network.log_prob(mapped_sample, hyperparams)
-            log_prob += self.log_jacobian(sample, mappings)
+            log_prob += self.log_jacobian(sample, param_dict)
 
             #reshape
             log_prob = torch.reshape(log_prob, [shape[0],shape[1]])
