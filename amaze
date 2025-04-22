@@ -1,0 +1,575 @@
+#!/usr/bin/env python
+
+#############################
+### AMAZE MODEL SELECTION ###
+#############################
+
+__author__ = "Michael Zevin <michael.j.zevin@gmail.com>"
+__contributors__ = [
+    "Storm Colloms <>",
+    "Chris Pankow <>",
+    "April Cheng <>"
+]
+
+# --- Import packages --- #
+import sys
+import argparse
+import h5py
+import warnings
+from functools import reduce
+import operator
+import multiprocessing
+from copy import deepcopy
+import pdb
+
+import numpy as np
+import pandas as pd
+import scipy.stats
+
+#from populations import bbh_models, gw_obs
+#from sample import sample
+import utils.helper_functions as helper_functions
+
+
+def amaze(ini_file):
+    # --- Read in the parsed ini file
+    MainSettings, RealObs, MockObs, Flows, Extras = helper_functions.parse_ini_file(ini_file)
+
+    # --- Set random seed
+    if Extras.get('random-seed'):
+        np.random.seed(Extras.get('random-seed')))
+
+    import pdb; pdb.set_trace()
+
+    # --- Save certain boolean arguments
+    verbose=args.verbose
+    make_plots=args.make_plots
+    use_flows=args.use_flows
+    continuous_sample=args.continuous_sample
+    use_wandb=args.use_wandb
+    lr = np.array(args.lr, dtype=float)
+
+    # Check whether to use normalising flows or KDEs for inference, and if using KDEs set discrete inference to True
+    if use_flows==True:
+        if verbose:
+            if continuous_sample==True:
+                print('Using Normalising Flows for continuous inference.')
+            else:
+                print('Using Normalising Flows for discrete inference.')
+    else:
+        if continuous_sample==True:
+            warnings.warn('Cannot use KDEs for continuous inference. Switching to discrete inference.')
+            continuous_sample=False
+        if verbose:
+            print('Using KDEs for inference.')
+
+    #sets up uniform regularisation constant N
+    if args.regularisation_N == None:
+        smallest_N = None
+    else:
+        smallest_N = int(args.regularisation_N)
+
+
+    # see if we're using GW observations
+    #using simulated observations currently only supported by KDE inference
+    gwobs = True if args.model0=='gwobs' else False
+
+    # --- Useful functions for accessing items in KDE dictionary
+    def getFromDict(dataDict, mapList):
+        return reduce(operator.getitem, mapList, dataDict)
+    def setInDict(dataDict, mapList, value):
+        getFromDict(dataDict, mapList[:-1])[mapList[-1]] = value
+
+    # --- Load in population models into dictionary structure: models[channel] for flows and models[channel][model] for KDEs
+    params = list(np.asarray(args.params).flatten())
+    if use_flows==True:
+        # Flow models do not support learning the detectable distribution
+        if verbose:
+            print("\nReading models, applying transformations, and initializing underlying Normalising Flow models...\n")
+        model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows, flow_path=args.flow_model_filename,\
+                sensitivity=args.sensitivity, detectable=False)
+    else:
+        # Construct both "underlying" KDE models (anything that has Pdet>0) and "detectable" KDE models
+        # `normalize` argument normalizes KDEs on unit cube
+        if verbose:
+            print("\nReading models, applying transformations, and initializing underlying KDEs...\n")
+        model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
+            sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=False)
+        _, pop_models_detectable = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
+            sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=True)
+
+    #grab model hyperparameters from model input file
+    model_names.sort()
+    hyperparams = sorted(list(set([x.split('/', 1)[1] for x in model_names])))
+    Nhyper = np.max([len(x.split('/')) for x in hyperparams])
+
+
+    # check that betas are provided if gwobs not specified, check betas, and sort channels and betas consistently
+    # 
+    if not gwobs:
+        if not args.betas:
+            raise ValueError("You need to either specify branching fractions or choose to instead use GW observations!")
+        betas = [float(x) for x in args.betas]
+        channels = list(args.channels)
+        # perform some checks
+        if (len(betas) != len(channels)) and (len(betas) != len(channels)-1):
+            raise ValueError("Must specify {0:d} or {1:d} branching fractions, you provided {2:d}!".format(len(channels)-1, len(channels), len(betas)))
+        if np.round(np.sum(betas), 5) > 1.0:
+            raise ValueError("Branching fractions must sum to less than or equal to 1.0, yours sum to {0:0.2f}!".format(np.sum(betas)))
+        if (len(betas) == len(channels)) and (np.round(np.sum(betas), 5) != 1.0):
+            raise ValueError("If you provide the same number of branching fractions as channels, they must sum to exactly 1.0 (yours sum to {0:0.2f})!".format(np.sum(betas)))
+        # synthesize last beta
+        if len(betas) == len(channels)-1:
+            betas.append(1.0 - np.sum(betas))
+        # sort betas in alphabetical order of channels
+        betas = [x for _,x in sorted(zip(channels,betas))]
+
+    # sort channels in alphabetical order
+    channels = sorted(list(pop_models.keys()))
+
+    # create dict for the hyperparameters at each level
+    hyperparam_dict  = {}
+    hyperidx=0
+    while hyperidx < Nhyper:
+        hyperidx_with_Nhyper = np.argwhere(np.asarray([len(x.split('/')) for x in hyperparams])>hyperidx).flatten()
+        hyperparams_at_level = sorted(set([x.split('/')[hyperidx] for x in np.asarray(hyperparams)[hyperidx_with_Nhyper]]))
+        hyperparam_dict[hyperidx] = hyperparams_at_level
+        hyperidx += 1
+
+    if verbose:
+        print("")
+        print("Formation channels: " + ", ".join(channels))
+        print("Astrophysical models: " + ", ".join(model_names))
+        print("Parameters for inference: " + ", ".join(params))
+        print("")
+
+
+    # --- Perform some checks to make sure everything is compatible
+
+    # check that the true model provided is valid if gwobs not specified
+    highest_smdl_ctr=0
+    for channel in channels:
+        base_smdls = [s.split('/')[1] for s in model_names if channel+'/' in s]
+        highest_smdls = [s.split('/')[-1] for s in model_names if channel+'/' in s]
+        # make sure base model is shared across channels
+        if (args.model0.split('/')[0] not in base_smdls and not gwobs):
+            raise ValueError("The true model you specified ({0:s}) is not one of the models in {1:s} directory!".format(args.model0, args.file_path))
+        # make sure highest level model is given in at least one channel
+        if (args.model0.split('/')[-1] in highest_smdls):
+            highest_smdl_ctr+=1
+    if (highest_smdl_ctr==0 and not gwobs):
+        raise ValueError("The highest level of the true model you specified ({0:s}) is not used in any of your models!".format(args.model0))
+
+    # ensure that the number of hyperparameters within each channel is the same depth
+    for channel in channels:
+        channel_smdls = [x for x in model_names if channel+'/' in x]
+        Nlevels_in_channel = [len(x.split('/')) for x in channel_smdls]
+        if not all(x == Nlevels_in_channel[0] for x in Nlevels_in_channel):
+            raise ValueError("The formation channel '{0:s}' does not have the same hierarchical levels of hyperparameters across submodels: {1:s}".format(channel, ','.join(channel_smdls)))
+
+    # ensure that models at each level are consistent across formation channels
+    i=1 #start at 1, which will be the highest-level hyperparameter since the formation channel is the first parameter
+    Nhyper_per_model = [len(x.split('/'))-1 for x in model_names]
+    while i <= Nhyper:
+        models_at_hyperlevel = np.asarray(model_names)[np.asarray(Nhyper_per_model) >= i]
+        hyper_set = sorted(set([x.split('/')[i] for x in models_at_hyperlevel]))
+        for channel in channels:
+            channel_smdls = [x for x in models_at_hyperlevel if channel+'/' in x]
+            if len(channel_smdls) > 0:
+                channel_set = sorted(set([x.split('/')[i] for x in channel_smdls]))
+                if sorted(hyper_set) != sorted(channel_set):
+                    raise ValueError("At hyperparameter level {0:d}, the formation channel {1:s} does not have the same hyperparameters as the rest of the models (all models: {2:s}, {1:s}: {3:s}".format(i, channel, ','.join(hyper_set), ','.join(channel_set)))
+        i += 1
+
+    # check that Nobs was specified if not using gwobs
+    if not gwobs and not args.Nobs:
+        raise ValueError("You need to specify and number of observations to be drawn from the 'true' model if not using GW observations!")
+
+    # check that valid measurement uncertainty is specified
+    if gwobs:
+        valid_uncertainties = ["delta", "gaussian", "posteriors", "test"]
+        if args.uncertainty not in valid_uncertainties:
+            raise ValueError("Unspecified measurement uncertainty procedure when using GW observations: '{0:s}' (valid uncertainties: {1:s})".format(args.uncertainty, ', '.join(valid_uncertainties)))
+    else:
+        valid_uncertainties = ["delta", "gwevents", "snr"]
+        if args.uncertainty not in valid_uncertainties:
+            raise ValueError("Unspecified measurement uncertainty procedure when using mock observations: '{0:s}' (valid uncertainties: {1:s})".format(args.uncertainty, ', '.join(valid_uncertainties)))
+
+    # If 'delta' measurement uncertainty is specified and >1 Nsamps give, spit out warning
+    if args.uncertainty=='delta' and args.Nsamps>1:
+        warnings.warn("You specified delta-function observations but asked for more than one sample, only one sample will be used for each observations!\n")
+
+    # If 'prior' is specified, ensure that we are using (and drawing) posterior samples for GW events
+    if args.prior and args.model0 != 'gwobs' and args.uncertainty not in ['delta','posteriors']:
+        warnings.warn("If you want to supply a key for the prior weights, you need to be using GW observations, and you need to be drawing the posterior samples with either the 'delta' or 'posteriors' method!\n")
+
+
+    # --- If model0 specified, store KDE models in `model0` dict and save relative fractions
+    if not gwobs:
+        if verbose:
+            print("Saving relative fractions and storing true model...\n")
+
+        # since channels are sorted alphabetically, branching fractions are defined in the same order
+        model0 = {}
+        model0_detectable = {}
+        for idx, channel in enumerate(channels):
+            channel_mdls = [x for x in model_names if channel+'/' in x]
+            for model in channel_mdls:
+                smdl = model.split('/',1)[1]
+                # print info about model0
+                if (smdl in args.model0):
+                    model0[channel] = getFromDict(pop_models, model.split('/'))
+                    model0_detectable[channel] = getFromDict(pop_models_detectable, model.split('/'))
+
+        # set branching fractions as attributes in KDEModels
+        for idx, channel in enumerate(channels):
+            model0[channel].rel_frac(betas[idx])
+            model0_detectable[channel].rel_frac(betas[idx])
+
+        # print model0 info
+        if verbose:
+            print("'{0:s}' set as true model".format(args.model0))
+            print("  model ranges:")
+            for channel, mdl in model0.items():
+                print("    {0:s} (beta={1:0.2f})".format(channel, mdl.rel_frac))
+                for param in args.params:
+                    print("      {0:s}: {1:0.3f} - {2:0.3f}".format(param,\
+                            mdl.sample_range[param][0], mdl.sample_range[param][1]))
+            print("")
+
+
+    # --- Generate observations ([observations, params, samples])
+    if verbose:
+        print("Generating observations...\n")
+
+    # Calls gw_obs.py to generate samples if argument is passed
+    #model0 denotes the model data if not using true GW data
+    if gwobs:
+        model0=None
+        observations, obsdata, p_theta, events = gw_obs.generate_observations(params, args.gw_path, \
+                                                args.Nsamps, args.uncertainty, args.prior)
+        if verbose:
+            print("Using the following {0:d} GW observations for inference:".format(len(events)))
+            print(*events)
+            print("")
+
+    else:
+        if verbose:
+            print("Drawing {0:d} observations from model0, assuming that the branching fractions represent the *underlying* distribution, and using the '{1:s}' method for measurement uncertainty...".format(int(args.Nobs), args.uncertainty))
+        rand_vars = np.random.random(size=args.Nobs)
+        randlow_hold = 0
+        for idx, channel in enumerate(model0):
+            if args.Nobs_probabilistic==True:
+                Nobs_per_channel = len(np.where((rand_vars>=randlow_hold) & \
+                        (rand_vars<(randlow_hold+model0[channel].rel_frac)))[0])
+                randlow_hold += model0[channel].rel_frac
+            elif args.Nobs_probabilistic==False:
+                # first check that the branching fractions * Nobs are integers
+                if not (args.Nobs*model0[channel].rel_frac).is_integer():
+                    warnings.warn("Number of observations is not divisble by detectable branching fractions provided, this may result in drawing a number of samples slighty different than what was specified!\n")
+                Nobs_per_channel = int(np.round(args.Nobs * model0[channel].rel_frac))
+            # add attribute for number of observations drawn
+            model0[channel].Nobs_from_beta(Nobs_per_channel)
+            if idx==0:
+                observations = model0[channel].generate_observations(Nobs_per_channel, args.uncertainty,\
+                    sample_from_kde=args.sample_from_kde, sensitivity=args.sensitivity, \
+                    multiproc=args.multiproc, verbose=verbose)
+                obsdata = model0[channel].measurement_uncertainty(args.Nsamps, \
+                    args.uncertainty, observation_noise=True, verbose=verbose)
+            else:
+                observations = np.concatenate((observations, \
+                    model0[channel].generate_observations(Nobs_per_channel, args.uncertainty, \
+                    sample_from_kde=args.sample_from_kde, sensitivity=args.sensitivity, \
+                    multiproc=args.multiproc, verbose=verbose)))
+                obsdata = np.concatenate((obsdata, \
+                    model0[channel].measurement_uncertainty(args.Nsamps, \
+                    args.uncertainty, observation_noise=True, verbose=verbose)))
+        # assume equal prior weight for each posterior sample
+        p_theta = np.ones((obsdata.shape[0],obsdata.shape[1]))
+
+    # plot for paper (uncomment if generating)
+    #print("\nPlotting marginalized KDE models...")
+    #from plot import plot_for_paper
+    #observations, obsdata, p_theta, events = gw_obs.generate_observations(params, args.gw_path, args.Nsamps, 'delta')
+    #fixed_vals = ['alpha10']
+    #plot_for_paper.plot_1D_kdemodels(model_names, kde_models_detectable, params, observations, obsdata, events, model0, name=args.name, fixed_vals=fixed_vals, plot_obs=True, plot_obs_samples=False)
+    #exit()
+
+    # Plot the KDEs and observations
+    if use_flows==False:
+        if make_plots==True:
+            if verbose==True:
+                print("\nPlotting marginalized KDE models...")
+            if len(args.model0.split('/'))>1:
+                fixed_vals = [args.model0.split('/')[-1]]
+            else:
+                fixed_vals = ['alpha10']
+            msplot.plot_1D_kdemodels(model_names, kde_models_detectable, params, observations, obsdata, \
+                model0, name=args.name, fixed_vals=fixed_vals, plot_obs=True, plot_obs_samples=False)
+            if verbose:
+                print("")
+
+    # --- Prepare population models
+    # If using Flows, train or load a previously trained model for each formation channel
+    # If using KDEs, freeze sample evaluations in each model. 
+    # This is time consuming, but only needs to be done once for each KDE model, 
+    # so we don't need to recompute p_model(data) over and over again when the 
+    # observation values aren't going to change.
+
+    if use_flows==True:
+        if verbose:
+            print('Training/Loading flows')
+        for i, channel in enumerate(channels):
+            if args.train_flows == True:
+                if use_wandb == True:
+                    #initialise weights and biases for flow network optimisation
+                    pop_models[channel].wandb_init(int(args.epochs[i]))
+                else:
+                    pop_models[channel].train(int(args.no_trans[i]), int(args.spline_bins[i]), int(args.no_neurons[i]), lr[i], \
+                        int(args.epochs[i]), args.batch_no, args.flow_model_filename, device=args.device)
+            else:
+                pop_models[channel].load_model(args.flow_model_filename, device=args.device)
+    else:
+        if verbose:
+            print("Freezing sample evaluations in their respective models...")
+        for model in model_names:
+            if verbose:
+                print("  {0:s}".format(model))
+            #freezing the sample evals means using the call function, this is where the prior on the posterior samples is set in
+            getFromDict(pop_models, model.split('/')).freeze(obsdata, smallest_N, data_pdf=p_theta, multiproc=args.multiproc)
+        if verbose:
+            print("Done freezing KDE evaluations of observations!\n")
+
+    # ---  Copy kde_models so that they all have the same levels of hyperparameters
+    all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
+    while all_models_at_deepest==False:
+        # loop until all models have the same length
+        for model in model_names:
+            # See number of hyperparameters in model, subtract one for channel
+            Nhyper_in_model = len(model.split('/'))-1
+            if use_flows==False:
+                kde_hold = getFromDict(pop_models, model.split('/'))
+            # loop until this model has all the hyperparam levels as well
+            while Nhyper_in_model < Nhyper:
+                if use_flows==False:
+                    # remove kde model from old level
+                    setInDict(pop_models, model.split('/'), {})
+                model_names.remove(model)
+                for new_hyperparam in hyperparam_dict[Nhyper_in_model]:
+                    if use_flows==False:
+                        # copy the same kde model for the higher hyperparam level
+                        new_kde = deepcopy(kde_hold)
+                        new_level = model.split('/') + [new_hyperparam]
+                        setInDict(pop_models, new_level, new_kde)
+                    # add new model name
+                    model_names.append(model+'/'+new_hyperparam)
+                Nhyper_in_model += 1
+            model_names.sort()
+        # see if all models are at deepest level else repeat
+        all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
+
+    if args.random_seed:
+        np.random.seed(args.random_seed)
+
+    # --- Do the sampling!
+    #Here we pass different args is we are doing discrete or continuous sampling of the population model parameters
+    if continuous_sample==False:
+        hyperparam_bounds = [[0, len(hyperparam_dict[i])] for i in range(Nhyper)]
+        sampler = sample.Sampler(model_names, hyperparam_bounds=hyperparam_bounds, likelihood='emcee_lnlike_disc')
+    else:
+        sampler = sample.Sampler(model_names)
+    sampler.sample(pop_models, obsdata, use_flows, smallest_N, continuous_sample, prior_pdf=p_theta, verbose=verbose)
+    samples = sampler.samples
+    raw_samples = samples.copy()
+    lnprb = sampler.lnprb
+    submodels_dict = sampler.submodels_dict
+
+    # take the floor of the hyperparameters to get the model indices for discrete sampling
+    if continuous_sample==False:
+        for hyper_idx in list(submodels_dict.keys()):
+            samples[:,:,hyper_idx] = np.floor(samples[:,:,hyper_idx]).astype(int)
+
+
+    # Reshape to have all steps from all walkers in a single dimension
+    original_shape = samples.shape
+    samples = samples.reshape((samples.shape[0] * samples.shape[1], samples.shape[2]))
+    raw_samples = raw_samples.reshape((raw_samples.shape[0] * raw_samples.shape[1], raw_samples.shape[2]))
+    lnprb = lnprb.reshape((lnprb.shape[0] * lnprb.shape[1]))
+
+    # Get samples for both *detectable* branching fractions and *underlying* branching fractions -- for KDEs only
+    #requires addition to do this for flows
+    if use_flows==False:
+        if verbose:
+            print("Converting underlying betas from sampler to detectable betas...\n")
+        detectable_samples = samples.copy()
+        smdls = list(set([x.split('/',1)[1] for x in model_names]))
+        # get the conversion factors between the detectable and underlying distributions
+        for smdl in sorted(smdls):
+            detectable_convfacs = []
+            for channel in channels:
+                detectable_convfacs.append(getFromDict(kde_models, [channel]+smdl.split('/')).alpha)
+            detectable_convfacs = np.asarray(detectable_convfacs)
+            # loop over hyperparams to get samples in this submodel
+            hyperparams = smdl.split('/')
+            for idx, param in enumerate(hyperparams):
+                hyper_idx = list(submodels_dict[idx].keys())[list(submodels_dict[idx].values()).index(param)]
+                if idx==0:
+                    matching_idxs = np.where(samples[:,idx] == hyper_idx)[0]
+                    matching_samps = samples[matching_idxs]
+                else:
+                    matching_idxs = matching_idxs[np.where(matching_samps[:,idx] == hyper_idx)[0]]
+                    matching_samps = samples[matching_idxs]
+            # if no samples are in this model, continue
+            if len(matching_idxs)==0:
+                continue
+            # convert hyperparams of these samples accordingly to get the underlying betas
+            converted_betas = detectable_samples[matching_idxs,len(hyperparams):] * detectable_convfacs
+            converted_betas /= converted_betas.sum(axis=1, keepdims=True)
+            detectable_samples[matching_idxs,len(hyperparams):] = converted_betas
+
+            # save converted relative fractions to model0
+            if smdl==args.model0:
+                converted_rel_fracs = betas * detectable_convfacs
+                converted_rel_fracs /= np.sum(converted_rel_fracs)
+                for cidx, channel in enumerate(channels):
+                    model0[channel].rel_frac_detectable(converted_rel_fracs[cidx])
+                    model0_detectable[channel].rel_frac_detectable(converted_rel_fracs[cidx])
+
+    # --- Print summary info about the sampling
+    if verbose:
+        print("Sample breakdown:")
+        recovered_vals = {}
+        smdls = list(set([x.split('/',1)[1] for x in model_names]))
+        for smdl in sorted(smdls):
+            recovered_vals[smdl] = {}
+            hyperparams = smdl.split('/')
+            # loop over hyperparams to get matching samples
+            for idx, param in enumerate(hyperparams):
+                hyper_idx = list(submodels_dict[idx].keys())[list(submodels_dict[idx].values()).index(param)]
+                if idx==0:
+                    matching_samps = samples[samples[:,idx] == hyper_idx]
+                    #matching_samps_detectable = detectable_samples[detectable_samples[:,idx] == hyper_idx]
+                else:
+                    matching_samps = matching_samps[matching_samps[:,idx] == hyper_idx]
+                    #matching_samps_detectable = matching_samps_detectable[matching_samps_detectable[:,idx] == hyper_idx]
+            # get counts in this model
+            counts = matching_samps.shape[0]
+            recovered_vals[smdl]['counts'] = counts
+            # get betas for this model from each channel
+            recovered_vals[smdl]['betas'] = {}
+            recovered_vals[smdl]['betas_detectable'] = {}
+            for cidx, channel in enumerate(channels):
+                # append beta values for this model
+                if counts > 0:
+                    beta = matching_samps[:,Nhyper+cidx]
+                    beta = round(np.mean(beta), 3)
+                    #beta_detectable = matching_samps_detectable[:,Nhyper+cidx]
+                    #beta_detectable = round(np.mean(beta_detectable), 3)
+                else:
+                    beta = np.nan
+                    #beta_detectable = np.nan
+                recovered_vals[smdl]['betas'][channel] = beta
+                #recovered_vals[smdl]['betas_detectable'][channel] = beta_detectable
+
+        # print everything
+        for smdl in sorted(smdls):
+            sample_counts = recovered_vals[smdl]['counts']
+            sample_betas = recovered_vals[smdl]['betas']
+            sample_betas_detectable = recovered_vals[smdl]['betas_detectable']
+            print("  Model {0:s}".format(smdl))
+            print("     {0:d} samples".format(sample_counts))
+            print("     betas={0}".format(list(sample_betas.items())))
+            print("     detectable betas={0}".format(list(sample_betas_detectable.items())))
+        print("")
+
+
+    # Plot samples and histograms of betas per model
+    if make_plots==True:
+        if verbose:
+            print("Plotting samples...\n")
+        for hyper_idx in list(submodels_dict.keys()):
+            # Need samples back in their original shape (separated by chains)
+            msplot.plot_samples(samples.reshape(original_shape), submodels_dict, model_names, channels, model0, name=args.name, hyper_idx=hyper_idx, detectable_beta=False)
+            #msplot.plot_samples(detectable_samples.reshape(original_shape), submodels_dict, model_names, channels, model0, name=args.name, hyper_idx=hyper_idx, detectable_beta=True)
+
+
+    # --- Save samples
+
+    if args.save_samples:
+        if args.name:
+            fname = "output_" + args.name + ".hdf5"
+        else:
+            fname = "output.hdf5"
+
+        if verbose:
+            print("Saving information to '{0:s}'...\n".format(fname))
+
+        hfile = h5py.File(fname, "w")
+        bsgrp = hfile.create_group("model_selection")
+
+        # add model0 attribute
+        if args.model0=='gwobs':
+            info = np.append([str(args.model0)], [*events])
+        else:
+            info = np.append([str(args.model0)], \
+                [*[key+': '+str(model0[key].rel_frac) for key in model0.keys()]])
+        info = [x.encode('utf-8') for x in info]
+        bsgrp.attrs["model0_params"] = info
+
+        # add argument attribute
+        arguments = []
+        for key, val in vars(args).items():
+            arguments.append('{}: {}'.format(key,val))
+        bsgrp.attrs["args"] = arguments
+
+        # add submodels_dict attribute
+        for hyper_idx in submodels_dict.keys():
+            conversion = []
+            for key, val in submodels_dict[hyper_idx].items():
+                conversion.append(str(key)+': '+str(val))
+            bsgrp.attrs["p"+str(hyper_idx)+'_dict'] = conversion
+        hfile.close()
+
+        # save observations as dataframe
+        df = pd.DataFrame()
+        saved_obs_idxs = np.repeat(np.arange(obsdata.shape[0]), obsdata.shape[1])
+        saved_obs = np.reshape(obsdata, (-1,len(params)))
+        df = pd.DataFrame(saved_obs, columns=params, index=saved_obs_idxs)
+        df.to_hdf(fname, key='model_selection/obsdata')
+
+        # save samples as dataframe
+        columns = []
+        convert_dict = {}
+        for hyper_idx in submodels_dict.keys():
+            columns.append('p'+str(hyper_idx))
+            # save column names to convert model indices to ints
+            convert_dict['p'+str(hyper_idx)] = float
+        for channel in channels:
+            columns.append('beta_'+channel)
+        df = pd.DataFrame(samples, columns=columns).astype(convert_dict)
+        df.to_hdf(fname, key='model_selection/samples')
+        df = pd.DataFrame(raw_samples, columns=columns).astype(convert_dict)
+        df.to_hdf(fname, key='model_selection/raw_samples')
+
+        # save detectable samples as dataframe
+        columns = []
+        convert_dict = {}
+        for hyper_idx in submodels_dict.keys():
+            columns.append('p'+str(hyper_idx))
+            # save column names to convert model indices to ints
+            convert_dict['p'+str(hyper_idx)] = float
+        for channel in channels:
+            columns.append('beta_'+channel)
+        #df = pd.DataFrame(detectable_samples, columns=columns).astype(convert_dict)
+        df.to_hdf(fname, key='model_selection/detectable_samples')
+
+        # save sample probabilities as dataframe
+        df = pd.DataFrame(lnprb, columns=['lnprb'])
+        df.to_hdf(fname, key='model_selection/lnprb')
+
+
+    print_file.close()
+
+# Run main AMAZE function
+if __name__ == "__main__":
+    amaze(sys.argv[1])
