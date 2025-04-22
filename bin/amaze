@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
-#######################
-### MODEL SELECTION ###
-#######################
+#############################
+### AMAZE MODEL SELECTION ###
+#############################
 
 # --- Import packages --- #
 import sys
@@ -63,6 +63,13 @@ argp.add_argument("--regularisation_N", type=str, default=None, help="If not non
 
 
 args = argp.parse_args()
+
+__author__ = "Michael Zevin <michael.j.zevin@gmail.com>"
+__contributors__ = [
+    "Storm Colloms <>",
+    "Chris Pankow <>",
+    "April Cheng <>"
+]
 
 
 # --- Set random seed
