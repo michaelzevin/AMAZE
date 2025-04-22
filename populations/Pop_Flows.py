@@ -351,7 +351,7 @@ class FlowModel(Model):
         conditionals = np.repeat([conditionals],np.shape(mapped_obs)[0], axis=0)
 
         #calculates likelihoods for all events and all samples
-        likelihoods_per_samp = self.flow.get_logprob(data, mapped_obs, self.mappings, conditionals)
+        likelihoods_per_samp = self.flow.get_logprob(data, mapped_obs, self.param_dict, conditionals)
 
         if smallest_N is not None:
             #LSE population probability plus uniform regularisation
@@ -421,12 +421,12 @@ class FlowModel(Model):
         #compute logistic mappings of data
         for pidx, param in enumerate(self.param_dict):
             if self.param_dict[param]['transf'] == 'logit':
-                mapped_data[:,:,pidx] = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
+                mapped_data[:,:,pidx],_,_ = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
             elif self.param_dict[param]['transf'] == 'tanh':
                 mapped_data[:,:,pidx] = np.arctanh(data[:,:,pidx])
             else:
                 print(f'No transformation type specified for {param} dimension, attempting logistic transform')
-                mapped_data[:,:,pidx] = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
+                mapped_data[:,:,pidx],_,_ = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
 
         return mapped_data
 
