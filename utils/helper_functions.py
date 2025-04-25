@@ -1,8 +1,18 @@
 import configparser
 import ast
+import warnings
 
+import numpy as np
 
-def parse_ini_file(file_path):
+__all__ = ['GetFromDict','SetInDict','ParseIniFile','ErrorCheckIni']
+
+# --- Useful functions for accessing items in KDE dictionary
+def GetFromDict(dataDict, mapList):
+    return reduce(operator.getitem, mapList, dataDict)
+def SetInDict(dataDict, mapList, value):
+    getFromDict(dataDict, mapList[:-1])[mapList[-1]] = value
+
+def ParseIniFile(file_path):
     """
     Parses an INI file and returns a dictionary with sections as keys and
     dictionaries of key-value pairs as values.
@@ -40,4 +50,67 @@ def parse_ini_file(file_path):
     MockObservations = config_dict.get('MockObservations')
     Flows = config_dict.get('Flows')
     ExtraOptions = config_dict.get('ExtraOptions')
-    return MainSettings, RealObservations, MockObservations, Flows, ExtraOptions
+
+    # save all options in arguments dictionary
+    settings = {}
+    for section in [MainSettings,RealObservations,MockObservations,Flows,ExtraOptions]:
+        for key, value in section.items():
+            settings[key] = value
+
+    return settings
+
+
+def ErrorCheckIni(settings):
+    """
+    Checks for errors in the INI file sections.
+    """
+    # Check consistency between flows and continuous sample specifications
+    if settings['use-flows']==False and settings['continuous-sampling']==True:
+        raise ValueError('Cannot use KDEs for continuous inference (you set use-flows==False and continuous-sampling==True).')
+
+    # Check that betas are provided correctly if using mock observations
+    if settings['true-model'] is not None:
+        # check that keys for channels and branching fractions are consistent
+        channels = settings['channels-dict'].keys()
+        betas = [float(x) for x in settings['branching-fractions'].values()]
+        for c in channels:
+            if c not in settings['branching-fractions'].keys():
+                raise ValueError(f"Channel {c} is in the channels-dict but not in the branching-fractions dict.")
+        # check that numebr of branching fractions provided is consistent with number of channels
+        if (len(betas) != len(channels)):
+            raise ValueError("Must specify {0:d} branching fractions, you provided {1:d}!".format(len(channels), len(betas)))
+        # check that Branching fractions sum to unity
+        if ~np.isclose(np.sum(betas), 1):
+            raise ValueError("Branching fractions must sum to unity (yours sum to {0:0.2f})!".format(np.sum(betas)))
+        # check that Nobs was specified if using mock observations
+        if not settings['n-observations']:
+            raise ValueError("You need to specify and number of observations to be drawn from the 'true' model if not using GW observations!")
+        # check that the uncertainty method is valid
+        valid_uncertainties = ["delta", "gwevents", "snr"]
+        if settings['uncertainty'] not in valid_uncertainties:
+            raise ValueError("Unspecified measurement uncertainty procedure when using mock observations: '{0:s}' (valid uncertainties: {1:s})".format(settings['uncertainty'], ', '.join(valid_uncertainties)))
+        # If 'delta' measurement uncertainty is specified and >1 Nsamps give, spit out warning
+        if settings['uncertainty']=='delta' and settings['N-observations']>1:
+            warnings.warn("You specified delta-function observations but asked for more than one sample, only one sample will be used for each observations!\n")
+
+    else:
+        # if not using mock observations, make sure event samples are provided
+        if settings['event-samples-path'] is None:
+            raise ValueError("You need to either specify a true model for mock observations or provide event samples using event-samples-path!")
+
+    # Check that the varied parameters for each population model are in the population parameter dictionary
+    for c in settings['channels-dict'].keys():
+        for p in settings['channels-dict'][c]['parameters']:
+            if p not in settings['population-parameter-dict'].keys():
+                raise ValueError(f"Parameter {p} from channel {c} is not in the population parameter dictionary.")
+
+    # Check that true model is provided if using mock observations
+    if settings['true-model'] is not None:
+        if len(settings['true-model'].keys()) != len(settings['population-parameter-dict'].keys()):
+           raise ValueError("The number of parameters in the true model does not match the number of parameters in the population parameter dictionary.")
+        # make sure the hyperparameters of the true model are valid
+        for key, value in settings['true-model'].items():
+            if key not in settings['population-parameter-dict'].keys():
+                raise ValueError(f"Parameter {key} from your true model is not in the population parameter dictionary.")
+            if value not in settings['population-parameter-dict'][key]['values'].keys():
+                raise ValueError(f"Parameter {key} and value {value} from your true model is not in the population parameter dictionary.")

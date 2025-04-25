@@ -26,103 +26,46 @@ import numpy as np
 import pandas as pd
 import scipy.stats
 
-#from populations import bbh_models, gw_obs
-#from sample import sample
+from populations import bbh_models, gw_obs
+from sample import sample
 import utils.helper_functions as helper_functions
 
 
 def amaze(ini_file):
     # --- Read in the parsed ini file
-    MainSettings, RealObs, MockObs, Flows, Extras = helper_functions.parse_ini_file(ini_file)
+    settings = helper_functions.ParseIniFile(ini_file)
+
+    # --- Error check the ini file
+    helper_functions.ErrorCheckIni(settings)
 
     # --- Set random seed
-    if Extras.get('random-seed'):
-        np.random.seed(Extras.get('random-seed')))
+    if settings.get('random-seed'):
+        np.random.seed(settings.get('random-seed'))
 
-    import pdb; pdb.set_trace()
-
-    # --- Save certain boolean arguments
-    verbose=args.verbose
-    make_plots=args.make_plots
-    use_flows=args.use_flows
-    continuous_sample=args.continuous_sample
-    use_wandb=args.use_wandb
-    lr = np.array(args.lr, dtype=float)
-
-    # Check whether to use normalising flows or KDEs for inference, and if using KDEs set discrete inference to True
-    if use_flows==True:
-        if verbose:
-            if continuous_sample==True:
-                print('Using Normalising Flows for continuous inference.')
-            else:
-                print('Using Normalising Flows for discrete inference.')
-    else:
-        if continuous_sample==True:
-            warnings.warn('Cannot use KDEs for continuous inference. Switching to discrete inference.')
-            continuous_sample=False
-        if verbose:
-            print('Using KDEs for inference.')
-
-    #sets up uniform regularisation constant N
-    if args.regularisation_N == None:
-        smallest_N = None
-    else:
-        smallest_N = int(args.regularisation_N)
-
+    # --- Set verbosity
+    verbose = settings.get('verbose')
 
     # see if we're using GW observations
     #using simulated observations currently only supported by KDE inference
-    gwobs = True if args.model0=='gwobs' else False
+    #gwobs = True if args.model0=='gwobs' else False
 
-    # --- Useful functions for accessing items in KDE dictionary
-    def getFromDict(dataDict, mapList):
-        return reduce(operator.getitem, mapList, dataDict)
-    def setInDict(dataDict, mapList, value):
-        getFromDict(dataDict, mapList[:-1])[mapList[-1]] = value
-
-    # --- Load in population models into dictionary structure: models[channel] for flows and models[channel][model] for KDEs
-    params = list(np.asarray(args.params).flatten())
-    if use_flows==True:
-        # Flow models do not support learning the detectable distribution
-        if verbose:
-            print("\nReading models, applying transformations, and initializing underlying Normalising Flow models...\n")
-        model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows, flow_path=args.flow_model_filename,\
-                sensitivity=args.sensitivity, detectable=False)
-    else:
-        # Construct both "underlying" KDE models (anything that has Pdet>0) and "detectable" KDE models
-        # `normalize` argument normalizes KDEs on unit cube
-        if verbose:
-            print("\nReading models, applying transformations, and initializing underlying KDEs...\n")
-        model_names, pop_models = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
-            sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=False)
-        _, pop_models_detectable = bbh_models.get_models(args.file_path, args.channels, args.params, use_flows,\
-            sensitivity=args.sensitivity, normalize=args.normalize_kde, detectable=True)
+    # --- Load in population models into dictionary structure: models[channel] 
+    #     for flows and models[channel][model] for KDEs
+    #params = list(np.asarray(args.params).flatten())
+    if verbose:
+        print("\nReading models, applying transformations, and initializing density estimates for astrophysical populations...\n")
+    model_names, pop_models = bbh_models.get_models(settings['path-to-populations'], \
+                        settings['channels-dict'], \
+                        settings['event-parameter-dict'], \
+                        settings['population-parameter-dict'], \
+                        settings['use-flows'], \
+                        flow_path=settings['flow-model-path'], \
+                        sensitivity=settings['sensitivity'])
 
     #grab model hyperparameters from model input file
     model_names.sort()
     hyperparams = sorted(list(set([x.split('/', 1)[1] for x in model_names])))
     Nhyper = np.max([len(x.split('/')) for x in hyperparams])
-
-
-    # check that betas are provided if gwobs not specified, check betas, and sort channels and betas consistently
-    # 
-    if not gwobs:
-        if not args.betas:
-            raise ValueError("You need to either specify branching fractions or choose to instead use GW observations!")
-        betas = [float(x) for x in args.betas]
-        channels = list(args.channels)
-        # perform some checks
-        if (len(betas) != len(channels)) and (len(betas) != len(channels)-1):
-            raise ValueError("Must specify {0:d} or {1:d} branching fractions, you provided {2:d}!".format(len(channels)-1, len(channels), len(betas)))
-        if np.round(np.sum(betas), 5) > 1.0:
-            raise ValueError("Branching fractions must sum to less than or equal to 1.0, yours sum to {0:0.2f}!".format(np.sum(betas)))
-        if (len(betas) == len(channels)) and (np.round(np.sum(betas), 5) != 1.0):
-            raise ValueError("If you provide the same number of branching fractions as channels, they must sum to exactly 1.0 (yours sum to {0:0.2f})!".format(np.sum(betas)))
-        # synthesize last beta
-        if len(betas) == len(channels)-1:
-            betas.append(1.0 - np.sum(betas))
-        # sort betas in alphabetical order of channels
-        betas = [x for _,x in sorted(zip(channels,betas))]
 
     # sort channels in alphabetical order
     channels = sorted(list(pop_models.keys()))
@@ -181,29 +124,6 @@ def amaze(ini_file):
                     raise ValueError("At hyperparameter level {0:d}, the formation channel {1:s} does not have the same hyperparameters as the rest of the models (all models: {2:s}, {1:s}: {3:s}".format(i, channel, ','.join(hyper_set), ','.join(channel_set)))
         i += 1
 
-    # check that Nobs was specified if not using gwobs
-    if not gwobs and not args.Nobs:
-        raise ValueError("You need to specify and number of observations to be drawn from the 'true' model if not using GW observations!")
-
-    # check that valid measurement uncertainty is specified
-    if gwobs:
-        valid_uncertainties = ["delta", "gaussian", "posteriors", "test"]
-        if args.uncertainty not in valid_uncertainties:
-            raise ValueError("Unspecified measurement uncertainty procedure when using GW observations: '{0:s}' (valid uncertainties: {1:s})".format(args.uncertainty, ', '.join(valid_uncertainties)))
-    else:
-        valid_uncertainties = ["delta", "gwevents", "snr"]
-        if args.uncertainty not in valid_uncertainties:
-            raise ValueError("Unspecified measurement uncertainty procedure when using mock observations: '{0:s}' (valid uncertainties: {1:s})".format(args.uncertainty, ', '.join(valid_uncertainties)))
-
-    # If 'delta' measurement uncertainty is specified and >1 Nsamps give, spit out warning
-    if args.uncertainty=='delta' and args.Nsamps>1:
-        warnings.warn("You specified delta-function observations but asked for more than one sample, only one sample will be used for each observations!\n")
-
-    # If 'prior' is specified, ensure that we are using (and drawing) posterior samples for GW events
-    if args.prior and args.model0 != 'gwobs' and args.uncertainty not in ['delta','posteriors']:
-        warnings.warn("If you want to supply a key for the prior weights, you need to be using GW observations, and you need to be drawing the posterior samples with either the 'delta' or 'posteriors' method!\n")
-
-
     # --- If model0 specified, store KDE models in `model0` dict and save relative fractions
     if not gwobs:
         if verbose:
@@ -211,7 +131,6 @@ def amaze(ini_file):
 
         # since channels are sorted alphabetically, branching fractions are defined in the same order
         model0 = {}
-        model0_detectable = {}
         for idx, channel in enumerate(channels):
             channel_mdls = [x for x in model_names if channel+'/' in x]
             for model in channel_mdls:
@@ -219,12 +138,10 @@ def amaze(ini_file):
                 # print info about model0
                 if (smdl in args.model0):
                     model0[channel] = getFromDict(pop_models, model.split('/'))
-                    model0_detectable[channel] = getFromDict(pop_models_detectable, model.split('/'))
 
         # set branching fractions as attributes in KDEModels
         for idx, channel in enumerate(channels):
             model0[channel].rel_frac(betas[idx])
-            model0_detectable[channel].rel_frac(betas[idx])
 
         # print model0 info
         if verbose:
@@ -433,7 +350,6 @@ def amaze(ini_file):
                 converted_rel_fracs /= np.sum(converted_rel_fracs)
                 for cidx, channel in enumerate(channels):
                     model0[channel].rel_frac_detectable(converted_rel_fracs[cidx])
-                    model0_detectable[channel].rel_frac_detectable(converted_rel_fracs[cidx])
 
     # --- Print summary info about the sampling
     if verbose:

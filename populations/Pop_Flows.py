@@ -21,8 +21,7 @@ from scipy.special import logit
 from scipy.special import logsumexp
 from scipy.special import expit
 from sklearn.model_selection import train_test_split
-from .utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults
-from .utils.flow import NFlow
+from .population_utils.flow import NFlow
 
 
 from astropy import cosmology
@@ -32,9 +31,11 @@ cosmo = cosmology.Planck18
 
 # Get the interpolation function for the projection factor in Dominik+2015
 # which takes in a random number and spits out a projection factor 'w'
-projection_factor_interp = projection_factor_Dominik2015_interp()
+# projection_factor_interp = projection_factor_Dominik2015_interp()
+# TODELETE
 
 _param_bounds = {"mchirp": (0,100), "q": (0,1), "chieff": (-1,1), "z": (0,10)}
+# Set based on config file...
 
 """
 Set of classes used to construct statistical models of populations.
