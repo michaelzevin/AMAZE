@@ -39,28 +39,28 @@ def amaze(ini_file):
     helper_functions.ErrorCheckIni(settings)
 
     # --- Set random seed
-    if settings.get('random-seed'):
-        np.random.seed(settings.get('random-seed'))
+    if settings['random-seed']:
+        np.random.seed(settings['random-seed'])
 
     # --- Set verbosity
-    verbose = settings.get('verbose')
-
-    # see if we're using GW observations
-    #using simulated observations currently only supported by KDE inference
-    #gwobs = True if args.model0=='gwobs' else False
+    verbose = settings['verbose']
 
     # --- Load in population models into dictionary structure: models[channel] 
     #     for flows and models[channel][model] for KDEs
-    #params = list(np.asarray(args.params).flatten())
     if verbose:
         print("\nReading models, applying transformations, and initializing density estimates for astrophysical populations...\n")
-    model_names, pop_models = bbh_models.get_models(settings['path-to-populations'], \
-                        settings['channels-dict'], \
-                        settings['event-parameter-dict'], \
-                        settings['population-parameter-dict'], \
-                        settings['use-flows'], \
-                        flow_path=settings['flow-model-path'], \
-                        sensitivity=settings['sensitivity'])
+    model_names, pop_models = bbh_models.get_models(\
+                file_path = settings['path-to-populations'], \
+                channel_dict = settings['channels-dict'], \
+                param_dict = settings['event-parameter-dict'], \
+                hyperparam_dict = settings['population-parameter-dict'], \
+                use_flows = settings['use-flows'], \
+                flow_path=settings['flow-model-path'], \
+                pdet_key=settings['pdet-key'], \
+                spinmag=settings['spin-mag-distribution'], \
+                max_samps=settings['kde-max-samples'], \
+                kde_bandwidth=settings['kde-bandwidth'])
+    pdb.set_trace()
 
     #grab model hyperparameters from model input file
     model_names.sort()

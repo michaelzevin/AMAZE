@@ -23,11 +23,12 @@ import astropy.units as u
 cosmo = cosmology.Planck18
 
 # Need to ensure all parameters are normalized over the same range
-_param_bounds = {"mchirp": (0,100), "q": (0,1), "chieff": (-1,1), "z": (0,10)}   # TODELETE
 _posterior_sigmas = {"mchirp": 1.512, "q": 0.166, "chieff": 0.1043, "z": 0.0463}   # UPDATE
 _snrscale_sigmas = {"mchirp": 0.04, "eta": 0.03, "chieff": 0.14}      # UPDATE
-_maxsamps = int(1e5)   # set as config parameter?
-_kde_bandwidth = 0.01   # set as config parameter?
+
+_normalization_bounds_defaults = {"mchirp": (0,100), "q": (0,1), "chieff": (-1,1), "z": (0,10)}
+_kde_bandwidth_default = 0.01
+_max_samps_default = int(1e5)
 
 # Get the interpolation function for the projection factor in Dominik+2015
 # which takes in a random number and spits out a projection factor 'w'
@@ -50,7 +51,8 @@ class Model(object):
 
 class KDEModel(Model):
     @staticmethod
-    def from_samples(label, samples, params, sensitivity=None, normalize=False, detectable=False, **kwargs):
+    def from_samples(label, samples, param_dict, pdet_key=None, max_samps=None, \
+                     kde_bandwidth=None, **kwargs):
         """
         Generate a KDE model instance from `samples`, where `params` are \
         series in the `samples` dataframe. Additional *kwargs* can be passed \
@@ -65,28 +67,35 @@ class KDEModel(Model):
             submodel label of form CE/chi00/alpha02
         samples : pandas Dataframe
             binary samples from population synthesis.
-        params : list of str
-            subset of mchirp, q, chieff, z
+        param_dict : dict
+            dictionary of event-level parameters, including parameter bounds
+        pdet_key : str
+            dataframe column name for detection probability
+        max_samps : int
+            maximum number of samples to use for each KDE
+        kde_bandwidth : float
+            bandwidth of KDEs
         """
         # check that the provdided sensitivity series is in the dataframe
-        if sensitivity is not None:
-            if 'pdet_'+sensitivity not in samples.columns:
-                raise ValueError("{0:s} was specified for your detection weights, but cannot find this column in the samples datafarme!")
-                
-        # get *\alpha* for each model, defined as \int p(\theta|\lambda) Pdet(\theta) d\theta
-        if sensitivity is not None:
+        if pdet_key is not None:
+            if pdet_key not in samples.columns:
+                raise ValueError(f"{pdet_key} was specified for your detection weights, but cannot find this column in the samples datafarme!")
+            # get *\alpha* for each model, defined as 
+            #   \int p(\theta|\lambda) Pdet(\theta) d\theta
             # if cosmological weights are provided, do mock draws from the pop
             if 'weight' in samples.keys():
-                mock_samp = samples.sample(int(1e6), weights=(samples['weight']/len(samples)), replace=True)
+                mock_samp = samples.sample(int(1e6), \
+                    weights=(samples['weight']/len(samples)), replace=True)
             else:
                 mock_samp = samples.sample(int(1e6), replace=True)
-            alpha = np.sum(mock_samp['pdet_'+sensitivity]) / len(mock_samp)
+            alpha = np.sum(mock_samp[pdet_key]) / len(mock_samp)
         else:
             alpha = 1.0
 
         # downsample population
-        if len(samples) > _maxsamps:
-            samples = samples.sample(_maxsamps)
+        N_samps = max_samps if max_samps else _max_samps_default
+        if len(samples) > N_samps:
+            samples = samples.sample(N_samps)
 
         ### GET WEIGHTS ###
         # if cosmological weights are provided...
@@ -95,40 +104,47 @@ class KDEModel(Model):
         else:
             cosmo_weights = np.ones(len(samples))
         # if detection weights are provided...
-        if sensitivity is not None:
-            pdets = np.asarray(samples['pdet_'+sensitivity])
+        if pdet_key is not None:
+            pdets = np.asarray(samples[pdet_key])
         else:
             pdets = np.ones(len(samples))
+
+        # get normalization, revert to defaults if not specified
+        params = list(param_dict.keys())
+        normalization_bounds = {}
+        for p in params:
+            normalization_bounds[p] = param_dict[p]['limits'] \
+                if param_dict[p]['limits'] \
+                else _normalization_bounds_defaults[p]
+
+        # TODELETE
+        # get optimal SNRs for this sensitivity
+        #if sensitivity is not None:
+        #    optimal_snrs = np.asarray(samples['snropt_'+sensitivity])
+        #else:
+        #    optimal_snrs = np.nan*np.ones(len(samples))
+
+        # get KDE bandwidth, revert to defaults if not specified
+        bandwidth = kde_bandwidth if kde_bandwidth else _kde_bandwidth_default
 
         # get samples for the parameters in question
         kde_samples = pd.DataFrame(samples[params])
 
-        # get optimal SNRs for this sensitivity
-        if sensitivity is not None:
-            optimal_snrs = np.asarray(samples['snropt_'+sensitivity])
-        else:
-            optimal_snrs = np.nan*np.ones(len(samples))
-
-        # get KDE bandwidth, if specified in kwargs
-        bandwidth = kwargs['bandwidth'] if 'bandwidth' in kwargs.keys() else _kde_bandwidth
-
-        return KDEModel(label, kde_samples, params, bandwidth, cosmo_weights, sensitivity, pdets, optimal_snrs, alpha, normalize=normalize, detectable=detectable)
+        return KDEModel(label, kde_samples, params, bandwidth, cosmo_weights, \
+                        pdets, alpha, normalization_bounds)
 
 
-    def __init__(self, label, samples, params, bandwidth=_kde_bandwidth, cosmo_weights=None, sensitivity=None, pdets=None, optimal_snrs=None, \
-        alpha=1, normalize=False, detectable=False):
+    def __init__(self, label, samples, params, bandwidth, cosmo_weights, \
+                 pdets, alpha, normalization_bounds):
         super()
         self.label = label
         self.samples = samples
         self.params = params
         self.bandwidth = bandwidth
         self.cosmo_weights = cosmo_weights
-        self.sensitivity = sensitivity
         self.pdets = pdets
-        self.optimal_snrs = optimal_snrs
         self.alpha = alpha
-        self.normalize = normalize
-        self.detectable = detectable
+        self.normalization_bounds = normalization_bounds
 
         # Save range of each parameter
         self.sample_range = {}
@@ -136,35 +152,19 @@ class KDEModel(Model):
             self.sample_range[param] = (samples[param].min(), samples[param].max())
 
         # Combine the cosmological and detection weights
-        if self.detectable == True:
-            if (cosmo_weights is not None) and (pdets is not None):
-                combined_weights = (cosmo_weights / np.sum(cosmo_weights)) * (pdets / np.sum(pdets))
-            elif pdets is not None:
-                combined_weights = (pdets / np.sum(pdets))
-            else:
-                combined_weights = np.ones(len(samples))
-            combined_weights /= np.sum(combined_weights)
-            self.combined_weights = combined_weights
+        if (cosmo_weights is not None):
+            weights = cosmo_weights / np.sum(cosmo_weights)
         else:
-            if (cosmo_weights is not None):
-                combined_weights = (cosmo_weights / np.sum(cosmo_weights))
-            else:
-                combined_weights = np.ones(len(samples))
-            combined_weights /= np.sum(combined_weights)
-            self.combined_weights = combined_weights
+            weights = np.ones(len(samples))
+        weights /= np.sum(weights)
+        self.weights = weights
         
-
         # Normalize data s.t. they all are on the unit cube
-        self.param_bounds = [_param_bounds[param] for param in samples.keys()]
-        if self.normalize==True:
-            samples = normalize_samples(np.asarray(samples), self.param_bounds)
-            # also need to scale pdf by parameter range, so save this
-            pdf_scale = scale_to_unity(self.param_bounds)
-        else:
-            samples = np.asarray(samples)
-            pdf_scale = None
+        bounds = list(self.normalization_bounds.values())
+        samples = normalize_samples(np.asarray(samples), bounds)
+        # also need to scale pdf by parameter range, so save this
+        pdf_scale = scale_to_unity(bounds)
         self.pdf_scale = pdf_scale
-        
 
         # add a little bit of scatter to samples that have the exact same values, as this will freak out the KDE generator
         for idx, param in enumerate(samples.T):
@@ -173,13 +173,8 @@ class KDEModel(Model):
 
         # Get the KDE objects, specify function for pdf
         # This custom KDE handles multiple dimensions, bounds, and weights, and takes in samples (Ndim x Nsamps)
-        # By default, the detection-weighted KDE and underlying KDE (for samples that have Pdet>0)  are saved
-        if self.normalize==True:
-            kde = Bounded_Nd_kde(samples.T, weights=combined_weights, bw_method=bandwidth, bounds=[(0,1)]*len(self.params))
-            self.pdf = lambda x: kde(normalize_samples(x, self.param_bounds).T) / pdf_scale
-        else:
-            kde = Bounded_Nd_kde(samples.T, weights=combined_weights, bw_method=bandwidth, bounds=self.param_bounds)
-            self.pdf =  lambda x: kde(x.T)
+        kde = Bounded_Nd_kde(samples.T, weights=weights, bw_method=bandwidth, bounds=[(0,1)]*len(self.params))
+        self.pdf = lambda x: kde(normalize_samples(x, self.param_bounds).T) / pdf_scale
         self.kde = kde
 
         self.cached_values = None
@@ -278,7 +273,7 @@ class KDEModel(Model):
             likelihood = (q_weight * likelihood) + pi_reg
         return likelihood
 
-    def marginalize(self, params, alpha, bandwidth=_kde_bandwidth):
+    def marginalize(self, params, alpha, bandwidth=_kde_bandwidth_default):
         """
         Generate a new, lower dimensional, KDEModel from the parameters in [params]
         """
@@ -494,6 +489,6 @@ def scale_to_unity(bounds):
     bounds of the data
     """
     ranges = [b[1]-b[0] for b in bounds]
-    scale_factor = np.product(ranges)
+    scale_factor = np.prod(ranges)
     return scale_factor
 

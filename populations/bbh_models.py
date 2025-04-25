@@ -16,9 +16,7 @@ _VALID_SPINMAG_DISTR = {
     "isotropic": _isotropic_spinmag
 }
 
-def get_params(df, params):
-    inference_params = pd.DataFrame()
-
+def get_params(df, params, spinmag_distr):
     # check if :params: in the dataframe, otherwise perform transformations
     for param in params:
         if param not in df.columns:
@@ -31,8 +29,8 @@ def get_params(df, params):
                 df['theta2'] = _DEFAULT_TRANSFORMS['theta2'](df)
                 # check if spin magnitudes have been provided
                 if not {'a1','a2'}.issubset(df.columns):
-                    if spin_distr in _VALID_SPINMAG_DISTR:
-                        df['a1'],df['a2'] = _VALID_SPINMAG_DISTR[spin_distr](df)
+                    if spinmag_distr in _VALID_SPINMAG_DISTR:
+                        df['a1'],df['a2'] = _VALID_SPINMAG_DISTR[spinmag_distr](df)
                     else:
                         raise NameError("Spin magnitudes not provided and valid spin distribution was not specified, so can't generate effective spins!")
                 df['chieff'] = _to_chi_eff(df)
@@ -44,7 +42,7 @@ def get_params(df, params):
 
 def read_hdf5(path, channel, channel_smdl_names, smdl_indxs_combos):
     """
-    For CE channel, returns diction of submodels for all chi_b and alpha_CE values, as keys i,j in dictionary
+    For CE channel, returns dict of submodels for all chi_b and alpha_CE values, as keys i,j in dictionary
     For other channels, returns dictionary of submodels varying with chi_b for that channel
 
     Parameters
@@ -66,12 +64,15 @@ def read_hdf5(path, channel, channel_smdl_names, smdl_indxs_combos):
         else:
             dict_key = smdl_indxs_combos[i]
         popsynth_outputs[dict_key]=pd.read_hdf(path, key=channel_smdl_name)
+        # perform transformations on the dataframe, if necessary
+        popsynth_outputs[dict_key] 
     return(popsynth_outputs)
 
 
 def get_models(file_path, channel_dict, param_dict, \
             hyperparam_dict, use_flows, flow_path=None, \
-            sensitivity=None, **kwargs):
+            pdet_key=None, spinmag=None, max_samps=1e5, \
+            kde_bandwidth=0.01, **kwargs):
     """
     Call this to get all the models and submodels, as well
     as KDEs of these models, packed inside of dictionaries labelled in the
@@ -91,6 +92,16 @@ def get_models(file_path, channel_dict, param_dict, \
         discrete values (with value key)/full names as values
     use_flows : bool
         flag for whether to use KDEs or flows in inference
+    flow_path : str
+        path to pre-existing flow models
+    pdet_key : str
+        key of detection probabilities to use for determining detection efficiency
+    spinmag : str
+        spin magnitude distribution to assume of effective spins are not provided
+    max_samps : int
+        maximum number of samples to use for each KDE
+    kde_bandwidth : float
+        bandwidth of KDEs
 
     Returns
     ----------
@@ -144,16 +155,15 @@ def get_models(file_path, channel_dict, param_dict, \
                 for x in np.asarray(hyperparams)[hyperidx_with_Nhyper]]))
         hyperparam_dict[hyperidx] = hyperparams_at_level
         hyperidx += 1
-    # length of the hyperparam dict for each dimension
-    hyperparam_pts_per_dim = [len(hyperparam_dict[x]) for x in range(Nhyper)]
-    import pdb; pdb.set_trace()
 
-    #KDE case: reads in submodel for each of the deepest
+    # KDE case: reads in submodel for each of the deepest
     #   model and sends to KDEModel
     # Flow case: reads in samples from all channels
     #   and sends to FlowModel
     if use_flows==True:
         flow_models = {}
+        # length of the hyperparam dict for each dimension
+        hyperparam_pts_per_dim = [len(hyperparam_dict[x]) for x in range(Nhyper)]
         for i, chnl in enumerate(tqdm(channel_dict.keys())):
             # find submodel keys, and indices they should correspond to
             #   in the input samples dict to the FlowModel
@@ -174,10 +184,13 @@ def get_models(file_path, channel_dict, param_dict, \
                     channel_hyperparams[hp] = hyperparam_dict[hp]
 
             popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos)
-            # FIXME: add the parameters here using get_params
+            # synthesize parameters if not present in the dataframe
+            popsynth_outputs = get_params(popsynth_outputs, \
+                                param_dict.keys(), spinmag)
+            # FIXME: need to feed this param_dict to pass along bounds
             flow_models[chnl] = FlowModel.from_samples(chnl, popsynth_outputs, \
                 param_dict, channel_hyperparams, smdl_indxs_combos, \
-                sensitivity=sensitivity, flow_path=flow_path)
+                pdet_key=pdet_key, flow_path=flow_path)
         return deepest_models, flow_models
     else:
         kde_models = {}
@@ -190,10 +203,18 @@ def get_models(file_path, channel_dict, param_dict, \
                         # if we are on the last level, 
                         #   read in data and store kdes
                         df = pd.read_hdf(file_path, key=smdl)
-                        # FIXME: add the parameters here using get_params
+                        # synthesize parameters if not present 
+                        #   in the dataframe
+                        df = get_params(df, param_dict.keys(), spinmag)
                         label = '/'.join(smdl_list)
-                        mdl = KDEModel.from_samples(label, df, list(param_dict.keys()), \
-                            sensitivity=sensitivity, **kwargs)
+                        mdl = KDEModel.from_samples(\
+                                label=label, \
+                                samples=df, \
+                                param_dict=param_dict, \
+                                pdet_key=pdet_key, \
+                                max_samps=max_samps, \
+                                kde_bandwidth=kde_bandwidth, \
+                                **kwargs)
                         current_level[part] = mdl
                     else:
                         current_level[part] = {}
