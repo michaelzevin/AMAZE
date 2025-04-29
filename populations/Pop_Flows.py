@@ -54,7 +54,7 @@ class Model(object):
 
 class FlowModel(Model):
     @staticmethod
-    def from_samples(channel, samples, param_dict, channel_hyperparams, smdl_indxs_combos, flow_path, sensitivity=None):
+    def from_samples(channel, samples, param_dict, channel_hyperparams, smdl_indxs_combos, sensitivity=None):
         """
         Generate a Flow model instance from `samples`, where `params` are series in the `samples` dataframe. 
         
@@ -128,10 +128,10 @@ class FlowModel(Model):
                 combined_weights[dict_key] = (cosmo_weights[dict_key] / np.sum(cosmo_weights[dict_key]))
             else:
                 combined_weights[dict_key] = np.ones(len(sbml_samps))
-        return FlowModel(channel, samples, param_dict, flow_path, channel_hyperparams, combined_weights, alpha, model_keys)
+        return FlowModel(channel, samples, param_dict, channel_hyperparams, combined_weights, alpha, model_keys)
 
 
-    def __init__(self, channel, samples, param_dict, flow_path, channel_hyperparams, combined_weights, alpha, model_keys):
+    def __init__(self, channel, samples, param_dict, channel_hyperparams, combined_weights, alpha, model_keys):
         """
         Initialisation for FlowModel object. Sets self.flow as instance of Nflow class, of which FlowModel is wrapper of that object.
 
@@ -595,22 +595,49 @@ class FlowModel(Model):
         if os.path.isfile(f'{filepath}flowconfig.json'):
             with open(f'{filepath}flowconfig.json', 'r') as f:
                 config = json.load(f)
-            #load flow hyperparameters
-            self.no_trans = config[self.channel_label]['transforms']
-            self.no_neurons = config[self.channel_label]['neurons']
-            self.no_blocks = config[self.channel_label]['blocks']
-            self.no_bins = config[self.channel_label]['bins']
-            #load parameter mapings
-            for param in self.param_dict:
-                if self.param_dict[param]['transf'] == 'logit':
-                    for key in ['logit_max', 'max']:
-                        self.param_dict[param][key] = config[self.channel_label][key]
+            #load flow hyperparameters, set to defaults if not found
+            try:
+                self.no_trans = config[self.channel_label]['transforms']
+            except:
+                self.no_trans = 6
+            try:
+                self.no_neurons = config[self.channel_label]['neurons']
+            except:
+                self.no_neurons = 128
+            try:
+                self.no_blocks = config[self.channel_label]['blocks']
+            except:
+                self.no_blocks = 2
+            try:
+                self.no_bins = config[self.channel_label]['bins']
+            except:
+                self.no_bins = 4
+            #load parameter mapings, from config if availble, if not then try mappings.np file
+            try:
+                for param in self.param_dict:
+                    if self.param_dict[param]['transf'] == 'logit':
+                        for key in ['logit_max', 'max']:
+                            self.param_dict[param][key] = config[self.channel_label][key]
+            except:
+                #deal with old hardcoding mapping saving
+                mappings = np.load(f'{filepath}{self.channel_label}_mappings.npy', allow_pickle=True)
+                self.param_dict['mchirp']['transf'] = 'logit'
+                self.param_dict['q']['transf'] = 'logit'
+                self.param_dict['chieff']['transf'] = 'tanh'
+                self.param_dict['z']['transf'] = 'logit'
+                i=0
+                for param in self.param_dict:
+                    if self.param_dict[param]['transf'] == 'logit':
+                        for key in ['logit_max', 'max']:
+                            self.param_dict[param][key] = mappings[i]
+                            i+=1
+
         else:
             raise Exception("no config available")
 
         batch_size=10000
         self.flow = NFlow(self.no_trans, self.no_neurons, self.no_blocks, self.no_bins, self.no_params, self.conditionals, batch_size,\
-            self.total_smdls, self.channel_label, RNVP=False, device=device)
+            self.total_smdls, RNVP=False, device=device)
         
         #load in actual flow model, and mappings
         self.flow.load_model(f'{filepath}{self.channel_label}.pt')

@@ -242,7 +242,7 @@ class NFlow():
         samples = np.zeros((no_samples, self.no_params))
 
         #check that requested conditional are the same shape as Nhyperparameters
-        if conditional.astype(np.float32).shape != self.cond_inputs:
+        if conditional.astype(np.float32).shape[0] != self.cond_inputs:
             raise ValueError(f"Expected shape {self.cond_inputs} but got {conditional.astype(np.float32).shape}")
 
         with torch.no_grad():
