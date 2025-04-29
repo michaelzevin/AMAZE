@@ -164,11 +164,12 @@ def get_models(file_path, channels, param_dict, use_flows, full_hyperparam_dict,
             #instead want this, assuming hyperparam_dict contains values and keys:
             channel_hyperparams = {}
             for hp in full_hyperparam_dict:
+                #TO CHANGE with MR #12 if full_hyperparam_dict[hp] in channels dict parameters:
                 if chnl in full_hyperparam_dict[hp]['channels']:
                     channel_hyperparams[hp] = full_hyperparam_dict[hp]
 
             popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos)
-            flow_models[chnl] = FlowModel.from_samples(chnl, popsynth_outputs, param_dict, channel_hyperparams, smdl_indxs_combos, sensitivity=sensitivity, flow_path=flow_path)
+            flow_models[chnl] = FlowModel.from_samples(chnl, popsynth_outputs, param_dict, channel_hyperparams, smdl_indxs_combos, sensitivity=sensitivity)
         return deepest_models, flow_models
     else:
         kde_models = {}
