@@ -182,9 +182,10 @@ def get_models(file_path, channel_dict, param_dict, \
             #   [hyperparam_dict[i] for i in range(channel_smdls_split.shape[1])]
             # instead want this, assuming hyperparam_dict contains values and keys:
             channel_hyperparams = {}
-            for hp in hyperparam_dict:
-                if chnl in hyperparam_dict[hp]['channels']:
-                    channel_hyperparams[hp] = hyperparam_dict[hp]
+            for hp in full_hyperparam_dict:
+                #TO CHANGE with MR #12 if full_hyperparam_dict[hp] in channels dict parameters:
+                if hp in channels_dict[chnl]['parameters']:
+                    channel_hyperparams[hp] = full_hyperparam_dict[hp]
 
             popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos)
             # synthesize parameters if not present in the dataframe
