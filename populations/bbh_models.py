@@ -73,7 +73,7 @@ def read_hdf5(path, channel, channel_smdl_names, smdl_indxs_combos):
     return(popsynth_outputs)
 
 
-def get_models(file_path, channels, param_dict, use_flows, full_hyperparam_dict, sensitivity=None, normalize=False, detectable=False, device='cpu', flow_path=None, **kwargs):
+def get_models(file_path, channels, param_dict, use_flows, full_hyperparam_dict, channels_dict, sensitivity=None, normalize=False, detectable=False, **kwargs):
     """
     Call this to get all the models and submodels, as well
     as KDEs of these models, packed inside of dictionaries labelled in the
@@ -165,7 +165,7 @@ def get_models(file_path, channels, param_dict, use_flows, full_hyperparam_dict,
             channel_hyperparams = {}
             for hp in full_hyperparam_dict:
                 #TO CHANGE with MR #12 if full_hyperparam_dict[hp] in channels dict parameters:
-                if chnl in full_hyperparam_dict[hp]['channels']:
+                if hp in channels_dict[chnl]['parameters']:
                     channel_hyperparams[hp] = full_hyperparam_dict[hp]
 
             popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos)

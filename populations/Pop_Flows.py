@@ -160,8 +160,8 @@ class FlowModel(Model):
         self.hyperparam_models = []
         self.hp_vals = []
         for hp in channel_hyperparams:
-            self.hyperparam_models.append(channel_hyperparams[hp]["keys"])
-            self.hp_vals.append(channel_hyperparams[hp]["vals"])
+            self.hyperparam_models.append(list(channel_hyperparams[hp]['values'].keys()))
+            self.hp_vals.append(list(channel_hyperparams[hp]["values"].items()))
         
         #number of binary parameters
         self.no_params = len(param_dict.keys())
