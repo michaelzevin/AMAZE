@@ -126,33 +126,37 @@ def amaze(ini_file):
     if verbose:
         print("Generating observations...\n")
 
-    pdb.set_trace()
     # Calls observations.py to generate samples if argument is passed
     # NOTE: model0 denotes the 'true' model data if not using actual observations
-    if gwobs:
+    if not settings['true-model']:
         model0=None
-        observations, obsdata, p_theta, events = observations.generate_observations(params, args.gw_path, \
-                                                args.Nsamps, args.uncertainty, args.prior)
+        observations, obsdata, p_theta, events = observations.read_observations(\
+                    params=settings['event-parameter-dict'].keys(), \
+                    Nsamps=settings['N-samples'], \
+                    obs_path=settings['event-samples-path'], \
+                    events_to_exclude=settings['events-to-exclude'], \
+                    prior_key=settings['event-level-prior'])
         if verbose:
             print("Using the following {0:d} observations for inference:".format(len(events)))
             print(*events)
             print("")
+        pdb.set_trace()  # TEST ABOVE, but real observations should be good to go
 
     else:
         if verbose:
-            print("Drawing {0:d} observations from model0, assuming that the branching fractions represent the *underlying* distribution, and using the '{1:s}' method for measurement uncertainty...".format(int(args.Nobs), args.uncertainty))
-        rand_vars = np.random.random(size=args.Nobs)
+            print("Drawing {0:d} observations from 'true' model, assuming that the branching fractions represent the *underlying* distribution, and using the '{1:s}' method for mock measurement uncertainty...".format(settings['n-observations'], settings['mock-uncertainty']))
+        rand_vars = np.random.random(size=settings['n-observations'])
         randlow_hold = 0
         for idx, channel in enumerate(model0):
-            if args.Nobs_probabilistic==True:
+            if settings['probabilistic-draws']==True:
                 Nobs_per_channel = len(np.where((rand_vars>=randlow_hold) & \
                         (rand_vars<(randlow_hold+model0[channel].rel_frac)))[0])
                 randlow_hold += model0[channel].rel_frac
-            elif args.Nobs_probabilistic==False:
-                # first check that the branching fractions * Nobs are integers
-                if not (args.Nobs*model0[channel].rel_frac).is_integer():
+            else:
+                # first check that the (branching_fractions * Nobs) are integers
+                if not (settings['n-observations']*model0[channel].rel_frac).is_integer():
                     warnings.warn("Number of observations is not divisble by detectable branching fractions provided, this may result in drawing a number of samples slighty different than what was specified!\n")
-                Nobs_per_channel = int(np.round(args.Nobs * model0[channel].rel_frac))
+                Nobs_per_channel = int(np.round(settings['n-observations'] * model0[channel].rel_frac))
             # add attribute for number of observations drawn
             model0[channel].Nobs_from_beta(Nobs_per_channel)
             if idx==0:
@@ -171,14 +175,6 @@ def amaze(ini_file):
                     args.uncertainty, observation_noise=True, verbose=verbose)))
         # assume equal prior weight for each posterior sample
         p_theta = np.ones((obsdata.shape[0],obsdata.shape[1]))
-
-    # plot for paper (uncomment if generating)
-    #print("\nPlotting marginalized KDE models...")
-    #from plot import plot_for_paper
-    #observations, obsdata, p_theta, events = gw_obs.generate_observations(params, args.gw_path, args.Nsamps, 'delta')
-    #fixed_vals = ['alpha10']
-    #plot_for_paper.plot_1D_kdemodels(model_names, kde_models_detectable, params, observations, obsdata, events, model0, name=args.name, fixed_vals=fixed_vals, plot_obs=True, plot_obs_samples=False)
-    #exit()
 
     # Plot the KDEs and observations
     if use_flows==False:

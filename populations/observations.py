@@ -15,15 +15,11 @@ Function for using GW observations for generating the observations in model
 selection. Events should be stored as dataframes in hdf5 files 
 ('GWXXXXXX*.hdf5') with the parameters being series in these dataframes. The 
 key containing the posterior samples should be consistent with the naming 
-scheme of GWTC-1.
+scheme of GWTC-3.
 """
 
-# can specify only a subset of GW events to use by uncommenting the line below
-_events_to_use=None
-#_events_to_use = pd.read_csv('/Users/stormcolloms/Documents/PhD/Project_work/AMAZE_model_selection/gwtc3_events/events_processed/events_processed/gwnames.csv',\
-#     dtype=str)
-#_events_to_use = np.reshape(np.array(_events_to_use),-1).tolist()
-#_events_to_use = ["GW150914", "GW151226", "GW170608", "GW190519_153544", "GW190412"]#,"GW151012","GW151226","GW170104","GW170608","GW170729","GW170809","GW170814","GW170818","GW170823"]
+# can exclude a subset of events to use by specifying in the list below
+_events_to_exclude=['GW190521']
 
 # specify the hdf5 key for the approximant being used
 _posterior_key = "combined"
@@ -56,133 +52,81 @@ def _gwtc_to_redshift(gw):
     for val in tqdm(dL):
         redz.append(z_at_value(cosmo.luminosity_distance, val*u.Mpc))
     return np.asarray(redz)
-    
-gwtc_dict = {'z': 'redshift'}
-gwtc_transforms = {'mchirp': _gwtc_to_mchirp, 'q': _gwtc_to_q, \
+
+_conversion_dict = {'z': 'redshift'}
+_parameter_transforms = {'mchirp': _gwtc_to_mchirp, 'q': _gwtc_to_q, \
                    'chieff': _gwtc_to_chieff, 'z': _gwtc_to_redshift}
 
 
-def generate_observations(params, gwpath, Nsamps, mesaurement_uncertainty='delta', prior=None):
+def read_observations(params, Nsamps, obs_path, events_to_exclude=None, prior_key=None):
 
-    if _events_to_use:
-        gw_names = _events_to_use
-        gw_files = [gw+'.hdf5' for gw in gw_names]
-    else:
-        gw_files = []
-        events_to_exclude = np.array(['GW190521.hdf5'])
-        for f in os.listdir(gwpath):
-            if 'prior' not in f:
-                if any(gwname not in f for gwname in events_to_exclude):
-                    gw_files.append(f)
-    gw_names = [gw.split('.')[0] for gw in gw_files]
+    event_files = []
+    for f in os.listdir(obs_path):
+        if any(name not in f for name in events_to_exclude):
+            event_files.append(f)
+    event_names = [f.split('.')[0] for f in event_files]
+    import pdb; pdb.set_trace()
 
-
-    # Check to see if the files are in the obspath, else raise error
-    if _events_to_use:
-        for gw_file, gw_name in zip(gw_files,gw_names):
-            ctr=0
-            tmp = []
-            for f in os.listdir(gwpath):
-                if gw_file in f:
-                    ctr+=1
-            if ctr==0:
-                raise ValueError("Posterior samples for {0:s} not in the \
-    directory '{1:s}'!".format(gw,gwpath))
-            if ctr>1:
-                raise ValueError("More than one posterior sample file for {0:s} \
-    is present in the directory '{1:s}'!".format(gw,gwpath))
-
-
-    # Set up samples for the specified smearing, as well as observations
-    observations = np.zeros((len(gw_files), len(params)))
-    if mesaurement_uncertainty=='delta':
-        samples_shape = (len(gw_files), 1, len(params))
-        samples=np.zeros(samples_shape)
-    elif mesaurement_uncertainty in ['gaussian', 'posteriors', 'test']:
-        samples_shape = (len(gw_files), Nsamps, len(params))
-        samples=np.zeros(samples_shape)
-    else:
-        raise ValueError("{0:s} is not an available options for smearing GW observations!".format(mesaurement_uncertainty))
+    # Set up samples for the specified uncertainty, as well as observations
+    observations = np.zeros((len(event_files), len(params)))
+    samples_shape = (len(event_files), Nsamps, len(params))
+    samples=np.zeros(samples_shape)
 
     # If prior key is set, set up empty array for prior weights p(theta)
-    if prior is not None:
+    #   otherwise, assume equal prior weights for all samples
+    if prior_key is not None:
         p_theta = np.zeros((samples.shape[0],samples.shape[1]))
     else:
         p_theta = np.ones((samples.shape[0],samples.shape[1]))
 
     # Now, get the samples for each event
-    for idx, f in enumerate(gw_files):
-        df = pd.read_hdf(os.path.join(gwpath,f), key=_posterior_key)
+    for idx, f in enumerate(event_files):
+        df = pd.read_hdf(os.path.join(obs_path,f), key=_posterior_key)
         # Check to see if the necessary parameters are in the files or the 
         # transformations provided, else raise error
         for pidx, p in enumerate(params):
             # first, see if parameter is in the keys already
             if p in df.columns:
                 continue
-            elif p in gwtc_dict.keys():
-                df = df.rename({gwtc_dict[p]:p}, axis='columns')
-            elif p in gwtc_transforms.keys():
-                df[p] = gwtc_transforms[p](df)
+            elif p in _conversion_dict.keys():
+                df = df.rename({_conversion_dict[p]:p}, axis='columns')
+            elif p in _parameter_transforms.keys():
+                df[p] = _parameter_transforms[p](df)
             else:
-                raise KeyError("Parameter {0:s} not found in the GW data, and no transformations exist to generate it from the GW data!".format(p))
+                raise KeyError("Parameter {0:s} not found in the observational data, and no transformations exist to generate it from the data provided!".format(p))
 
         # see if the specified prior key is in the data
-        if prior is not None:
-            if prior not in df.columns:
-                raise KeyError("Prior key {0:s} is not in the GW data for file {1:s}!".format(prior,f))
+        if prior_key is not None and prior_key not in df.columns:
+            raise KeyError("Prior key {0:s} is not in the GW data for file {1:s}!".format(prior_key,f))
 
         # get the median observations (need to return for later)
         observations[idx, :] = np.median(df[params], axis=0)
 
-        # delta function observations
-        if mesaurement_uncertainty == 'delta':
-            samples[idx, :, :] = np.median(df[params], axis=0)
-            if prior is not None:
-                p_theta[idx, :] = np.median(df[prior])
-        # gaussian smearing
-        if mesaurement_uncertainty == 'gaussian':
-            for pidx, p in enumerate(params):
-                mean = np.mean(df[p])
-                low = np.percentile(df[p], 16)
-                high = np.percentile(df[p], 84)
-                sigma = ((high-mean) + (mean-low))/2.0
-                samples[idx, :, pidx] = np.random.normal(loc=mean, \
-                                                scale=sigma, size=Nsamps)
-        if mesaurement_uncertainty == 'posteriors':
-            
-            #set random seed for consistant posterior samples
-            np.random.seed(12)
-            if len(df) >= Nsamps:
-                sample_idxs = np.random.choice(np.arange(len(df)), size=Nsamps, replace=False)
-            else:
-                #draw all samples Ndraws times plus random without replacement extra
-                Ndraws = 0
-                sample_idxs = np.zeros(Nsamps, dtype=int)
-                while Ndraws*len(df)<Nsamps-len(df):
-                    sample_idxs[Ndraws*len(df):(Ndraws+1)*len(df)] = np.arange(len(df))
-                    Ndraws+=1
-                sample_idxs[Ndraws*len(df):Nsamps] = np.random.choice(np.arange(len(df)), size=Nsamps-(Ndraws*len(df)), replace=False)
-                    
-            samples[idx, :, :] = df[params].iloc[sample_idxs]
+        # randomly choose posterior samples to draw, with special treatment for cases,
+        #   where there are less samples than specified number of observations
+        if len(df) < Nsamps:
+            Ndraws = 0
+            sample_idxs = np.zeros(Nsamps, dtype=int)
+            while Ndraws*len(df) < Nsamps-len(df):
+                sample_idxs[Ndraws*len(df):(Ndraws+1)*len(df)] = np.arange(len(df))
+                Ndraws+=1
+            sample_idxs[Ndraws*len(df):Nsamps] = np.random.choice(np.arange(len(df)), size=Nsamps-(Ndraws*len(df)), replace=False)
+        else:
+            sample_idxs = np.random.choice(np.arange(len(df)), size=Nsamps, replace=False)
+        samples[idx, :, :] = df[params].iloc[sample_idxs]
 
-            if prior is not None:
-                p_theta[idx, :] = df[prior].iloc[sample_idxs]
+        if prior_key is not None:
+            p_theta[idx, :] = df[prior_key].iloc[sample_idxs]
 
-                #redraw samples until all prior samples are not 0
-                while np.any(p_theta[idx, :]==0.):
-                    p_theta_zero_idx = np.where([p_theta[idx, :]==0.])[1]
-                    print(p_theta_zero_idx)
-                    replacement_sample_idxs = np.random.choice(np.arange(len(df)), size=p_theta_zero_idx.shape, replace=False)
+            # redraw samples until all prior samples are not 0
+            #   SHOULD NOT HAPPEN!
+            while np.any(p_theta[idx, :]==0.):
+                p_theta_zero_idx = np.where([p_theta[idx, :]==0.])[1]
+                print(p_theta_zero_idx)
+                replacement_sample_idxs = np.random.choice(np.arange(len(df)), \
+                                            size=p_theta_zero_idx.shape, replace=False)
 
-                    samples[:, p_theta_zero_idx, :] = df[params].iloc[replacement_sample_idxs]
-                    p_theta[:,p_theta_zero_idx] = df[prior].iloc[replacement_sample_idxs]
+                samples[:, p_theta_zero_idx, :] = df[params].iloc[replacement_sample_idxs]
+                p_theta[:,p_theta_zero_idx] = df[prior_key].iloc[replacement_sample_idxs]
 
-
-        if mesaurement_uncertainty == 'test':
-            sample_idxs = [9,81,457]
-            samples[idx, :, :] = df[params].iloc[sample_idxs]
-            if prior is not None:
-                p_theta[idx, :] = df[prior].iloc[sample_idxs]
-
-    return observations, samples, p_theta, gw_names
-
+    return observations, samples, p_theta, event_names
