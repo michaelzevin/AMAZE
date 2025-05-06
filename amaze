@@ -16,8 +16,6 @@ import sys
 import argparse
 import h5py
 import warnings
-from functools import reduce
-import operator
 import multiprocessing
 from copy import deepcopy
 import pdb
@@ -26,7 +24,7 @@ import numpy as np
 import pandas as pd
 import scipy.stats
 
-from populations import bbh_models, gw_obs
+from populations import models, observations
 from sample import sample
 import utils.helper_functions as helper_functions
 
@@ -49,7 +47,7 @@ def amaze(ini_file):
     #     for flows and models[channel][model] for KDEs
     if verbose:
         print("\nReading models, applying transformations, and initializing density estimates for astrophysical populations...\n")
-    model_names, pop_models = bbh_models.get_models(\
+    model_names, pop_models = models.get_models(\
                 file_path = settings['path-to-populations'], \
                 channel_dict = settings['channels-dict'], \
                 param_dict = settings['event-parameter-dict'], \
@@ -60,7 +58,6 @@ def amaze(ini_file):
                 spinmag=settings['spin-mag-distribution'], \
                 max_samps=settings['kde-max-samples'], \
                 kde_bandwidth=settings['kde-bandwidth'])
-    pdb.set_trace()
 
     #grab model hyperparameters from model input file
     model_names.sort()
@@ -81,53 +78,22 @@ def amaze(ini_file):
 
     if verbose:
         print("")
-        print("Formation channels: " + ", ".join(channels))
-        print("Astrophysical models: " + ", ".join(model_names))
-        print("Parameters for inference: " + ", ".join(params))
+        print("Formation channels: [" + ", ".join(channels)+"]")
+        print("Astrophysical models: [" + ", ".join(model_names)+"]")
+        print("Parameters for inference: [" + ", ".join(settings['population-parameter-dict'])+"]")
         print("")
 
-
     # --- Perform some checks to make sure everything is compatible
-
-    # check that the true model provided is valid if gwobs not specified
-    highest_smdl_ctr=0
-    for channel in channels:
-        base_smdls = [s.split('/')[1] for s in model_names if channel+'/' in s]
-        highest_smdls = [s.split('/')[-1] for s in model_names if channel+'/' in s]
-        # make sure base model is shared across channels
-        if (args.model0.split('/')[0] not in base_smdls and not gwobs):
-            raise ValueError("The true model you specified ({0:s}) is not one of the models in {1:s} directory!".format(args.model0, args.file_path))
-        # make sure highest level model is given in at least one channel
-        if (args.model0.split('/')[-1] in highest_smdls):
-            highest_smdl_ctr+=1
-    if (highest_smdl_ctr==0 and not gwobs):
-        raise ValueError("The highest level of the true model you specified ({0:s}) is not used in any of your models!".format(args.model0))
-
-    # ensure that the number of hyperparameters within each channel is the same depth
-    for channel in channels:
-        channel_smdls = [x for x in model_names if channel+'/' in x]
-        Nlevels_in_channel = [len(x.split('/')) for x in channel_smdls]
-        if not all(x == Nlevels_in_channel[0] for x in Nlevels_in_channel):
-            raise ValueError("The formation channel '{0:s}' does not have the same hierarchical levels of hyperparameters across submodels: {1:s}".format(channel, ','.join(channel_smdls)))
-
-    # ensure that models at each level are consistent across formation channels
-    i=1 #start at 1, which will be the highest-level hyperparameter since the formation channel is the first parameter
-    Nhyper_per_model = [len(x.split('/'))-1 for x in model_names]
-    while i <= Nhyper:
-        models_at_hyperlevel = np.asarray(model_names)[np.asarray(Nhyper_per_model) >= i]
-        hyper_set = sorted(set([x.split('/')[i] for x in models_at_hyperlevel]))
-        for channel in channels:
-            channel_smdls = [x for x in models_at_hyperlevel if channel+'/' in x]
-            if len(channel_smdls) > 0:
-                channel_set = sorted(set([x.split('/')[i] for x in channel_smdls]))
-                if sorted(hyper_set) != sorted(channel_set):
-                    raise ValueError("At hyperparameter level {0:d}, the formation channel {1:s} does not have the same hyperparameters as the rest of the models (all models: {2:s}, {1:s}: {3:s}".format(i, channel, ','.join(hyper_set), ','.join(channel_set)))
-        i += 1
+    helper_functions.ErrorCheckModels(model_names, channels, \
+                    Nhyper, settings['true-model'])
 
     # --- If model0 specified, store KDE models in `model0` dict and save relative fractions
-    if not gwobs:
+    if settings['true-model'] is not None:
         if verbose:
             print("Saving relative fractions and storing true model...\n")
+
+        # format true model from config appropriately
+        true_model = "/".join(settings['true-model'].values())
 
         # since channels are sorted alphabetically, branching fractions are defined in the same order
         model0 = {}
@@ -136,37 +102,39 @@ def amaze(ini_file):
             for model in channel_mdls:
                 smdl = model.split('/',1)[1]
                 # print info about model0
-                if (smdl in args.model0):
-                    model0[channel] = getFromDict(pop_models, model.split('/'))
+                if (smdl in true_model):
+                    model0[channel] = \
+                    helper_functions.GetFromDict(pop_models, model.split('/'))
 
         # set branching fractions as attributes in KDEModels
-        for idx, channel in enumerate(channels):
-            model0[channel].rel_frac(betas[idx])
+        for channel in channels:
+            model0[channel].rel_frac(settings['branching-fractions'][channel])
 
         # print model0 info
         if verbose:
-            print("'{0:s}' set as true model".format(args.model0))
+            print("'{0:s}' set as true model".format(true_model))
             print("  model ranges:")
             for channel, mdl in model0.items():
                 print("    {0:s} (beta={1:0.2f})".format(channel, mdl.rel_frac))
-                for param in args.params:
-                    print("      {0:s}: {1:0.3f} - {2:0.3f}".format(param,\
+                for param in settings['event-parameter-dict'].keys():
+                    print("      {0:s}: [{1:0.3f},{2:0.3f}]".format(param,\
                             mdl.sample_range[param][0], mdl.sample_range[param][1]))
             print("")
 
 
-    # --- Generate observations ([observations, params, samples])
+    # --- Generate observations (shape: [observations, params, samples])
     if verbose:
         print("Generating observations...\n")
 
-    # Calls gw_obs.py to generate samples if argument is passed
-    #model0 denotes the model data if not using true GW data
+    pdb.set_trace()
+    # Calls observations.py to generate samples if argument is passed
+    # NOTE: model0 denotes the 'true' model data if not using actual observations
     if gwobs:
         model0=None
-        observations, obsdata, p_theta, events = gw_obs.generate_observations(params, args.gw_path, \
+        observations, obsdata, p_theta, events = observations.generate_observations(params, args.gw_path, \
                                                 args.Nsamps, args.uncertainty, args.prior)
         if verbose:
-            print("Using the following {0:d} GW observations for inference:".format(len(events)))
+            print("Using the following {0:d} observations for inference:".format(len(events)))
             print(*events)
             print("")
 

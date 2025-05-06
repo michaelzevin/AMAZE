@@ -4,11 +4,16 @@ import warnings
 
 import numpy as np
 
-__all__ = ['GetFromDict','SetInDict','ParseIniFile','ErrorCheckIni']
+from functools import reduce
+import operator
+
+__all__ = ['GetFromDict','SetInDict','ParseIniFile',\
+           'ErrorCheckIni','ErrorCheckModels']
 
 # --- Useful functions for accessing items in KDE dictionary
 def GetFromDict(dataDict, mapList):
     return reduce(operator.getitem, mapList, dataDict)
+
 def SetInDict(dataDict, mapList, value):
     getFromDict(dataDict, mapList[:-1])[mapList[-1]] = value
 
@@ -114,3 +119,48 @@ def ErrorCheckIni(settings):
                 raise ValueError(f"Parameter {key} from your true model is not in the population parameter dictionary.")
             if value not in settings['population-parameter-dict'][key]['values'].keys():
                 raise ValueError(f"Parameter {key} and value {value} from your true model is not in the population parameter dictionary.")
+
+
+def ErrorCheckModels(model_names, channels, Nhyper, true_model):
+    """
+    Checks models and hyperparameters
+    """
+    # check that the true model provided is valid if gwobs not specified
+    highest_smdl_ctr=0
+    if true_model is not None:
+        for channel in channels:
+            base_smdls = [s.split('/')[1] for s in model_names if channel+'/' in s]
+            highest_smdls = [s.split('/')[-1] for s in model_names if channel+'/' in s]
+            # make sure base model is shared across channels
+            model0 = [x for x in true_model.values()]
+            if model0[0] not in base_smdls:
+                raise ValueError("The true model you specified ({0:s}) is not one of the models you loaded in!".format('/'.join(model0)))
+            # make sure highest level model is given in at least one channel
+            if (model0[-1] in highest_smdls):
+                highest_smdl_ctr+=1
+        if (highest_smdl_ctr==0):
+            raise ValueError("The highest level of the true model you specified ({0:s}) is not used in any of your models!".format('/'.join(model0)))
+
+    # ensure that the number of hyperparameters within each channel
+    #   is the same depth
+    for channel in channels:
+        channel_smdls = [x for x in model_names if channel+'/' in x]
+        Nlevels_in_channel = [len(x.split('/')) for x in channel_smdls]
+        if not all(x == Nlevels_in_channel[0] for x in Nlevels_in_channel):
+            raise ValueError("The formation channel '{0:s}' does not have the same hierarchical levels of hyperparameters across submodels: {1:s}".format(channel, ','.join(channel_smdls)))
+
+    # ensure that models at each level are consistent across formation channels
+    # start at 1, which will be the highest-level hyperparameter
+    #   since the formation channel is the first parameter
+    i=1
+    Nhyper_per_model = [len(x.split('/'))-1 for x in model_names]
+    while i <= Nhyper:
+        models_at_hyperlevel = np.asarray(model_names)[np.asarray(Nhyper_per_model) >= i]
+        hyper_set = sorted(set([x.split('/')[i] for x in models_at_hyperlevel]))
+        for channel in channels:
+            channel_smdls = [x for x in models_at_hyperlevel if channel+'/' in x]
+            if len(channel_smdls) > 0:
+                channel_set = sorted(set([x.split('/')[i] for x in channel_smdls]))
+                if sorted(hyper_set) != sorted(channel_set):
+                    raise ValueError("At hyperparameter level {0:d}, the formation channel {1:s} does not have the same hyperparameters as the rest of the models (all models: {2:s}, {1:s}: {3:s}".format(i, channel, ','.join(hyper_set), ','.join(channel_set)))
+        i += 1

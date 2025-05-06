@@ -160,7 +160,8 @@ class KDEModel(Model):
         self.weights = weights
         
         # Normalize data s.t. they all are on the unit cube
-        bounds = list(self.normalization_bounds.values())
+        bounds = list(normalization_bounds.values())
+        self.bounds = bounds
         samples = normalize_samples(np.asarray(samples), bounds)
         # also need to scale pdf by parameter range, so save this
         pdf_scale = scale_to_unity(bounds)
@@ -174,7 +175,7 @@ class KDEModel(Model):
         # Get the KDE objects, specify function for pdf
         # This custom KDE handles multiple dimensions, bounds, and weights, and takes in samples (Ndim x Nsamps)
         kde = Bounded_Nd_kde(samples.T, weights=weights, bw_method=bandwidth, bounds=[(0,1)]*len(self.params))
-        self.pdf = lambda x: kde(normalize_samples(x, self.param_bounds).T) / pdf_scale
+        self.pdf = lambda x: kde(normalize_samples(x, bounds).T) / pdf_scale
         self.kde = kde
 
         self.cached_values = None
@@ -184,10 +185,7 @@ class KDEModel(Model):
         Samples KDE and denormalizes sampled data
         """
         kde = self.kde
-        if self.normalize==True:
-            samps = denormalize_samples(kde.bounded_resample(N).T, self.param_bounds)
-        else:
-            samps = kde.bounded_resample(N).T
+        samps = denormalize_samples(kde.bounded_resample(N).T, self.bounds)
         return samps
 
     def rel_frac(self, beta):
@@ -195,12 +193,6 @@ class KDEModel(Model):
         Stores the relative fraction of samples that are drawn from this KDE model
         """
         self.rel_frac = beta
-
-    def rel_frac_detectable(self, beta):
-        """
-        Stores the detectable relative fraction of samples that are drawn from this KDE model
-        """
-        self.rel_frac_detectable = beta
 
     def Nobs_from_beta(self, Nobs):
         """
@@ -273,7 +265,7 @@ class KDEModel(Model):
             likelihood = (q_weight * likelihood) + pi_reg
         return likelihood
 
-    def marginalize(self, params, alpha, bandwidth=_kde_bandwidth_default):
+    def marginalize(self, params, alpha, bandwidth):
         """
         Generate a new, lower dimensional, KDEModel from the parameters in [params]
         """
@@ -282,7 +274,13 @@ class KDEModel(Model):
             label += '_'+p
         label += '_marginal'
 
-        return KDEModel(label, self.samples[params], params, bandwidth, self.cosmo_weights, self.sensitivity, self.pdets, self.optimal_snrs, alpha, self.normalize, self.detectable)
+        norm_bounds = {}
+        for p in params:
+            norm_bounds[p] = self.normalization_bounds[p]
+
+        return KDEModel(label, self.samples[params], params, \
+                        self.bandwidth, self.cosmo_weights, self.pdets, \
+                        self.alpha, norm_bounds)
 
 
     def generate_observations(self, Nobs, uncertainty, sample_from_kde=False, sensitivity='design_network', multiproc=True, verbose=False):
@@ -360,8 +358,8 @@ class KDEModel(Model):
                 for pidx in np.arange(self.observations.shape[-1]):
                     mu = obs[pidx]
                     sigma = [_posterior_sigmas[param] for param in self.samples.columns][pidx]
-                    low_lim = self.param_bounds[pidx][0]
-                    high_lim = self.param_bounds[pidx][1]
+                    low_lim = self.normalization_bounds[pidx][0]
+                    high_lim = self.normalization_bounds[pidx][1]
 
                     # construnct gaussian and drawn samples
                     dist = norm(loc=mu, scale=sigma)
