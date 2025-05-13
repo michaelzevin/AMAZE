@@ -61,7 +61,7 @@ def mtoteta_to_m1m2(Mt,eta):
     m2 = 0.5*(Mt - np.sqrt(Mt**2 - 4*eta*Mt**2))
     return m1, m2
 
-def mtotq_to_mc(Mt,q):
+def mtotq_to_mchirp(Mt,q):
     mc = q**(3./5) * Mt / (1+q)**6./5
 
 def mtoteta_to_mchirpq(Mt,eta):
@@ -84,5 +84,6 @@ _DEFAULT_TRANSFORMS = {
     "q": _to_q, 
     "eta": _to_eta,
     "theta1": _to_tilt1,
-    "theta2": _to_tilt2
+    "theta2": _to_tilt2,
+    "chieff": _to_chieff
 }

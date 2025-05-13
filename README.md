@@ -2,7 +2,7 @@
 A codebase for performing multi-channel inference using catalogs of compact binaries
 
 ### Authors:
-Storm Colloms, Michael Zevin, Chris Pankow
+Michael Zevin, Storm Colloms, April Cheng, Chris Pankow
   
   
 ### Papers:
@@ -10,8 +10,6 @@ Storm Colloms, Michael Zevin, Chris Pankow
 https://ui.adsabs.harvard.edu/abs/2017ApJ...846...82Z/abstract
 
 https://ui.adsabs.harvard.edu/abs/2020arXiv201110057Z/abstract
-
-Colloms et al. 2025
 
 Why use one channel when you can use them all? `AMAZE` performs hierarchical inference on branching fractions between any number of population models, where each channel can also be parameterized by physical prescriptions. The executable `model_select` performs the inference, and has many options for including different channels, specifying whether to use mock observations or actual gravitational-wave observations, specifying the prescription for measurement uncertainty, etc. Run `python model_select --help` to learn more about all these options. 
 

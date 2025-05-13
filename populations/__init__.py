@@ -13,9 +13,9 @@ import numpy as np
 import scipy as sp
 import pandas as pd
 from scipy.stats import norm, truncnorm
-from .utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults
-from .utils.bounded_Nd_kde import Bounded_Nd_kde
-from .utils.transform import mchirpq_to_m1m2, mtotq_to_m1m2, mtoteta_to_m1m2, chieff_to_s1s2, mtotq_to_mc, mtoteta_to_mchirpq, eta_to_q
+# from .population_utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults   # can we delete this?
+from .population_utils.bounded_Nd_kde import Bounded_Nd_kde
+from .population_utils.transform import mchirpq_to_m1m2, mtotq_to_m1m2, mtoteta_to_m1m2, chieff_to_s1s2, mtotq_to_mchirp, mtoteta_to_mchirpq, eta_to_q
 
 from astropy import cosmology
 from astropy.cosmology import z_at_value
@@ -23,15 +23,16 @@ import astropy.units as u
 cosmo = cosmology.Planck18
 
 # Need to ensure all parameters are normalized over the same range
-_param_bounds = {"mchirp": (0,100), "q": (0,1), "chieff": (-1,1), "z": (0,10)}
-_posterior_sigmas = {"mchirp": 1.512, "q": 0.166, "chieff": 0.1043, "z": 0.0463}
-_snrscale_sigmas = {"mchirp": 0.04, "eta": 0.03, "chieff": 0.14}
-_maxsamps = int(1e5)
-_kde_bandwidth = 0.01
+_param_bounds = {"mchirp": (0,100), "q": (0,1), "chieff": (-1,1), "z": (0,10)}   # TODELETE
+_posterior_sigmas = {"mchirp": 1.512, "q": 0.166, "chieff": 0.1043, "z": 0.0463}   # UPDATE
+_snrscale_sigmas = {"mchirp": 0.04, "eta": 0.03, "chieff": 0.14}      # UPDATE
+_maxsamps = int(1e5)   # set as config parameter?
+_kde_bandwidth = 0.01   # set as config parameter?
 
 # Get the interpolation function for the projection factor in Dominik+2015
 # which takes in a random number and spits out a projection factor 'w'
-projection_factor_interp = projection_factor_Dominik2015_interp()
+#projection_factor_interp = projection_factor_Dominik2015_interp()
+# TODELETE
 
 """
 Set of classes used to construct statistical models of populations.
