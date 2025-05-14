@@ -130,13 +130,9 @@ posteriors!".format(self.posterior_name))
         p0 = np.empty(shape=(self.nwalkers, self.ndim))
 
         # first, for the population hyperparameters
-        #selects points in uniform prior for chi_b
-        p0[:,0] = np.random.uniform(self.hyperparam_bounds[0][0], self.hyperparam_bounds[0][1], size=self.nwalkers)
-        #select points in log uniform in alphaCE (uniform over alphaCE indices, or loguniform in alphaCE values)
-        if continuous_sample==False:
-            p0[:,1] = np.random.uniform(self.hyperparam_bounds[1][0], self.hyperparam_bounds[1][1], size=self.nwalkers)
-        else:
-            p0[:,1] = loguniform.rvs(self.hyperparam_bounds[1][0], self.hyperparam_bounds[1][1], size=self.nwalkers)
+        #selects points in uniform prior over hyperparameter indices (discrete case) or transformed hyperparameter values (continuous case)
+        for hpidx in range(self.Nhyper):
+            p0[:,hpidx] = np.random.uniform(self.hyperparam_bounds[hpidx][0], self.hyperparam_bounds[hpidx][1], size=self.nwalkers)
         # second, for the branching fractions (we have Nchannel-1 betasin the inference because of the implicit constraint that Sum(betas) = 1
         _concentration = np.ones(len(self.channels))
         beta_p0 =  dirichlet.rvs(_concentration, p0.shape[0])
@@ -199,13 +195,8 @@ def lnp(x, submodels_dict, _concentration, hyperparam_bounds, continuous_sample)
     if np.sum(betas_tmp) != 1.0:
         return -np.inf
 
-    if continuous_sample==False:
-        alpha_CE_prior = 0
-    else:
-        alpha_CE_prior = loguniform.logpdf(x[1],a=hyperparam_bounds[1][0], b=hyperparam_bounds[1][1])
-
     # Dirchlet distribution prior for betas, plus uniform prior on log(alphaCE) values
-    return dirichlet.logpdf(betas_tmp, _concentration) + alpha_CE_prior
+    return dirichlet.logpdf(betas_tmp, _concentration)
 
 
 def lnlike_cont(x, data, pop_models, submodels_dict, channels, prior_pdf, smallest_N, **kwargs): #data here is obsdata previously, and x is the point in log hyperparam space
@@ -282,7 +273,6 @@ def lnlike_disc(x, data, pop_models, submodels_dict, channels, prior_pdf, use_fl
     smallest_N : int
         Value by which to regularise the population distributions.
         See eq. 2 in Colloms et al.
-
     
     Returns
         log likelihood summed over events, accounting for detection efficiency

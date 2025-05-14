@@ -167,7 +167,10 @@ class FlowModel(Model):
         self.hp_vals = []
         for hp in channel_hyperparams:
             self.hyperparam_models.append(list(channel_hyperparams[hp]['values'].keys()))
-            self.hp_vals.append(list(channel_hyperparams[hp]['values'].values()))
+            if channel_hyperparams[hp]['transform'] == 'log':
+                self.hp_vals.append(list(np.log(list(channel_hyperparams[hp]['values'].values()))))
+            else:
+                self.hp_vals.append(list(channel_hyperparams[hp]['values'].values()))
         
         #number of binary parameters
         self.no_params = len(param_dict.keys())

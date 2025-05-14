@@ -59,7 +59,6 @@ def amaze(ini_file):
                         settings['event-parameter-dict'], \
                         settings['population-parameter-dict'], \
                         settings['use-flows'], \
-                        flow_path=settings['flow-model-path'], \
                         sensitivity=settings['sensitivity'])
 
     #grab model hyperparameters from model input file
@@ -245,7 +244,7 @@ def amaze(ini_file):
                     pop_models[channel].train(int(args.no_trans[i]), int(args.spline_bins[i]), int(args.no_neurons[i]), lr[i], \
                         int(args.epochs[i]), args.batch_no, args.flow_model_filename, device=args.device)
             else:
-                pop_models[channel].load_model(args.flow_model_filename, device=args.device)
+                pop_models[channel].load_model(settings['flow-model-path'], device=args.device)
     else:
         if verbose:
             print("Freezing sample evaluations in their respective models...")
@@ -289,22 +288,41 @@ def amaze(ini_file):
         np.random.seed(args.random_seed)
 
     # --- Do the sampling!
-    #Here we pass different args is we are doing discrete or continuous sampling of the population model parameters
+    #We pass different args if we are doing discrete or continuous sampling of the population model parameters
     if continuous_sample==False:
+        #find discrete hyperparam bounds from number of submodels for each hyperparameter
         hyperparam_bounds = [[0, len(hyperparam_dict[i])] for i in range(Nhyper)]
         sampler = sample.Sampler(model_names, hyperparam_bounds=hyperparam_bounds, likelihood='emcee_lnlike_disc')
     else:
-        sampler = sample.Sampler(model_names)
+        #find continuous hyperparam bounds from first and last values of each hyperparameter
+        hyperparam_bounds = []
+        for hpidx in range Nhyper:
+            hp = settings['population-parameter-dict'][list(settings['population-parameter-dict'].keys())[hyper_idx]]
+            transform = hp['transform']
+            if transform == 'log':
+                hyperparam_bounds.append([np.log(list(hp['values'].values()))[0],np.log(list(hp['values'].values()))[1]])
+            else:
+                hyperparam_bounds.append([list(hp['values'].values())[0],list(hp['values'].values())[1]])
+        sampler = sample.Sampler(model_names, hyperparam_bounds=hyperparam_bounds)
+
     sampler.sample(pop_models, obsdata, use_flows, smallest_N, continuous_sample, prior_pdf=p_theta, verbose=verbose)
     samples = sampler.samples
+    #raw samples are either unfloored samples (discrete sampling), or transformed samples (continuous sampling)
     raw_samples = samples.copy()
     lnprb = sampler.lnprb
     submodels_dict = sampler.submodels_dict
 
-    # take the floor of the hyperparameters to get the model indices for discrete sampling
     if continuous_sample==False:
+         # take the floor of the hyperparameters to get the model indices for discrete sampling
         for hyper_idx in list(submodels_dict.keys()):
             samples[:,:,hyper_idx] = np.floor(samples[:,:,hyper_idx]).astype(int)
+    else:
+        # transform any samples evaluated in log space back from log space
+        for hyper_idx in list(submodels_dict.keys()):
+            transform = settings['population-parameter-dict'][list(settings['population-parameter-dict'].keys())[hyper_idx]]['transform']
+            if transform == 'log':
+                samples[:,:,hyper_idx] = np.exp(samples[:,:,hyper_idx])
+
 
 
     # Reshape to have all steps from all walkers in a single dimension
@@ -315,10 +333,11 @@ def amaze(ini_file):
 
     # Get samples for both *detectable* branching fractions and *underlying* branching fractions -- for KDEs only
     #requires addition to do this for flows
+    if verbose:
+        print("Converting underlying betas from sampler to detectable betas...\n")
+    detectable_samples = samples.copy()
+
     if use_flows==False:
-        if verbose:
-            print("Converting underlying betas from sampler to detectable betas...\n")
-        detectable_samples = samples.copy()
         smdls = list(set([x.split('/',1)[1] for x in model_names]))
         # get the conversion factors between the detectable and underlying distributions
         for smdl in sorted(smdls):
@@ -350,6 +369,27 @@ def amaze(ini_file):
                 converted_rel_fracs /= np.sum(converted_rel_fracs)
                 for cidx, channel in enumerate(channels):
                     model0[channel].rel_frac_detectable(converted_rel_fracs[cidx])
+    else:
+        alphas = np.zeros((detectable_samples.shape[0], len(channels)))
+        #get alpha given hyperparameters in each sample
+        for i, samp in enumerate(tqdm(samples)):
+            for cidx, chnl in enumerate(channels):
+                smdl = pop_models[chnl]
+                #find detection efficiency
+                if continuous_sample:
+                    alphas[i, cidx] = smdl.get_alpha([samp[:smdl.conditionals]])
+                else:
+                    if smdl.conditionals > 1:
+                        hyperparam_idxs = tuple(samp[:smdl.conditionals])
+                    else:
+                        hyperparam_idxs = samp[0]
+                    alphas[i, cidx] = smdl.alpha[hyperparam_idxs]
+                
+        #multiply by detection efficiency
+        detectable_samples = (detectable_samples[:,2:] * alphas)
+        #divide by sum across channels
+        detectable_samples /= detectable_samples.sum(axis=1, keepdims=True)
+        
 
     # --- Print summary info about the sampling
     if verbose:
@@ -476,7 +516,7 @@ def amaze(ini_file):
             convert_dict['p'+str(hyper_idx)] = float
         for channel in channels:
             columns.append('beta_'+channel)
-        #df = pd.DataFrame(detectable_samples, columns=columns).astype(convert_dict)
+        df = pd.DataFrame(detectable_samples, columns=columns).astype(convert_dict)
         df.to_hdf(fname, key='model_selection/detectable_samples')
 
         # save sample probabilities as dataframe
