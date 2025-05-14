@@ -279,6 +279,7 @@ def amaze(ini_file):
                     verbose=verbose)
 
     samples = sampler.samples
+    #raw samples are either unfloored samples (discrete sampling), or transformed samples (continuous sampling)
     raw_samples = samples.copy()
     lnprb = sampler.lnprb
     submodels_dict = sampler.submodels_dict
@@ -287,6 +288,13 @@ def amaze(ini_file):
     if settings['continuous-sampling']==False:
         for hyper_idx in list(submodels_dict.keys()):
             samples[:,:,hyper_idx] = np.floor(samples[:,:,hyper_idx]).astype(int)
+    else:
+        # transform any samples evaluated in log space back from log space
+        for hyper_idx in list(submodels_dict.keys()):
+            transform = settings['population-parameter-dict'][list(settings['population-parameter-dict'].keys())[hyper_idx]]['transform']
+            if transform == 'log':
+                samples[:,:,hyper_idx] = np.exp(samples[:,:,hyper_idx])
+
 
 
     # Reshape to have all steps from all walkers in a single dimension

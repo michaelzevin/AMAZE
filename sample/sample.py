@@ -141,11 +141,9 @@ class Sampler(object):
         p0 = np.empty(shape=(self.nwalkers, self.ndim))
 
         # first, for the population hyperparameters
-        for idx in np.arange(self.Nhyper):
-            if self.log_sampling[idx]==True:
-                p0[:,idx] = loguniform.rvs(self.hyperparam_bounds[idx][0], self.hyperparam_bounds[idx][1], size=self.nwalkers)
-            else:
-                p0[:,idx] = np.random.uniform(self.hyperparam_bounds[idx][0], self.hyperparam_bounds[idx][1], size=self.nwalkers)
+        #selects points in uniform prior over hyperparameter indices (discrete case) or transformed hyperparameter values (continuous case)
+        for hpidx in range(self.Nhyper):
+            p0[:,hpidx] = np.random.uniform(self.hyperparam_bounds[hpidx][0], self.hyperparam_bounds[hpidx][1], size=self.nwalkers)
         # second, for the branching fractions (we have Nchannel-1 betasin the inference because of the implicit constraint that Sum(betas) = 1
         _concentration = np.ones(len(self.channels))
         beta_p0 =  dirichlet.rvs(_concentration, p0.shape[0])
@@ -211,14 +209,8 @@ def lnp(x, submodels_dict, _concentration, hyperparam_bounds, \
     if np.sum(betas_tmp) != 1.0:
         return -np.inf
 
-    # Make sure to include log-uniform prior if log sampling is specified
-    hyperp = np.sum([loguniform.logpdf(x[i], \
-                            a=hyperparam_bounds[i][0], b=hyperparam_bounds[i][1]) \
-                            if log_sampling[i]==True else 0 \
-                            for i in np.arange(len(log_sampling))])
-
     # Dirchlet distribution prior for betas, plus uniform prior on log(alphaCE) values
-    return dirichlet.logpdf(betas_tmp, _concentration) + hyperp
+    return dirichlet.logpdf(betas_tmp, _concentration)
 
 
 def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
