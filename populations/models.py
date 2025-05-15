@@ -71,8 +71,8 @@ def read_hdf5(path, channel, channel_smdl_names, smdl_indxs_combos):
 
 def get_models(file_path, channel_dict, param_dict, \
             hyperparam_dict, use_flows, flow_path=None, \
-            pdet_key=None, spinmag=None, max_samps=1e5, \
-            kde_bandwidth=0.01, **kwargs):
+            sensitivity=None, spinmag=None, max_samps=1e5, \
+            kde_bandwidth=0.01, store_optimal_snrs=False, **kwargs):
     """
     Call this to get all the models and submodels, as well
     as KDEs of these models, packed inside of dictionaries labelled in the
@@ -94,14 +94,17 @@ def get_models(file_path, channel_dict, param_dict, \
         flag for whether to use KDEs or flows in inference
     flow_path : str
         path to pre-existing flow models
-    pdet_key : str
-        key of detection probabilities to use for determining detection efficiency
+    sensitivity : str
+        key string of detection probabilities to use for determining detection efficiency
+          'pdet_${sensitivity}' in the hdf5 file
     spinmag : str
         spin magnitude distribution to assume of effective spins are not provided
     max_samps : int
         maximum number of samples to use for each KDE
     kde_bandwidth : float
         bandwidth of KDEs
+    store_optimal_snrs : bool
+        only True if using mock observations with SNR-based uncertainty
 
     Returns
     ----------
@@ -190,7 +193,7 @@ def get_models(file_path, channel_dict, param_dict, \
             # FIXME: need to feed this param_dict to pass along bounds
             flow_models[chnl] = FlowModel.from_samples(chnl, popsynth_outputs, \
                 param_dict, channel_hyperparams, smdl_indxs_combos, \
-                pdet_key=pdet_key, flow_path=flow_path)
+                sensitivity=sensitivity, flow_path=flow_path)
         return deepest_models, flow_models
     else:
         kde_models = {}
@@ -211,9 +214,10 @@ def get_models(file_path, channel_dict, param_dict, \
                                 label=label, \
                                 samples=df, \
                                 param_dict=param_dict, \
-                                pdet_key=pdet_key, \
+                                sensitivity=sensitivity, \
                                 max_samps=max_samps, \
                                 kde_bandwidth=kde_bandwidth, \
+                                store_optimal_snrs=store_optimal_snrs, \
                                 **kwargs)
                         current_level[part] = mdl
                     else:

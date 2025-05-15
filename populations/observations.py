@@ -61,14 +61,17 @@ _parameter_transforms = {'mchirp': _gwtc_to_mchirp, 'q': _gwtc_to_q, \
 def read_observations(params, Nsamps, obs_path, events_to_exclude=None, prior_key=None):
 
     event_files = []
+    event_names = []
     for f in os.listdir(obs_path):
-        if any(name not in f for name in events_to_exclude):
-            event_files.append(f)
-    event_names = [f.split('.')[0] for f in event_files]
-    import pdb; pdb.set_trace()
+        event_name = f.split('.')[0]
+        if events_to_exclude is not None:
+            if event_name in events_to_exclude:
+                continue
+        event_files.append(f)
+        event_names.append(event_name)
 
-    # Set up samples for the specified uncertainty, as well as observations
-    observations = np.zeros((len(event_files), len(params)))
+    # Set up samples for the specified uncertainty
+    obs=np.zeros((len(event_files), len(params)))
     samples_shape = (len(event_files), Nsamps, len(params))
     samples=np.zeros(samples_shape)
 
@@ -83,7 +86,7 @@ def read_observations(params, Nsamps, obs_path, events_to_exclude=None, prior_ke
     for idx, f in enumerate(event_files):
         df = pd.read_hdf(os.path.join(obs_path,f), key=_posterior_key)
         # Check to see if the necessary parameters are in the files or the 
-        # transformations provided, else raise error
+        #   transformations provided, else raise error
         for pidx, p in enumerate(params):
             # first, see if parameter is in the keys already
             if p in df.columns:
@@ -95,12 +98,12 @@ def read_observations(params, Nsamps, obs_path, events_to_exclude=None, prior_ke
             else:
                 raise KeyError("Parameter {0:s} not found in the observational data, and no transformations exist to generate it from the data provided!".format(p))
 
+        # get the median observations (need to return for later)
+        obs[idx, :] = np.median(df[params], axis=0)
+
         # see if the specified prior key is in the data
         if prior_key is not None and prior_key not in df.columns:
             raise KeyError("Prior key {0:s} is not in the GW data for file {1:s}!".format(prior_key,f))
-
-        # get the median observations (need to return for later)
-        observations[idx, :] = np.median(df[params], axis=0)
 
         # randomly choose posterior samples to draw, with special treatment for cases,
         #   where there are less samples than specified number of observations
@@ -118,15 +121,4 @@ def read_observations(params, Nsamps, obs_path, events_to_exclude=None, prior_ke
         if prior_key is not None:
             p_theta[idx, :] = df[prior_key].iloc[sample_idxs]
 
-            # redraw samples until all prior samples are not 0
-            #   SHOULD NOT HAPPEN!
-            while np.any(p_theta[idx, :]==0.):
-                p_theta_zero_idx = np.where([p_theta[idx, :]==0.])[1]
-                print(p_theta_zero_idx)
-                replacement_sample_idxs = np.random.choice(np.arange(len(df)), \
-                                            size=p_theta_zero_idx.shape, replace=False)
-
-                samples[:, p_theta_zero_idx, :] = df[params].iloc[replacement_sample_idxs]
-                p_theta[:,p_theta_zero_idx] = df[prior_key].iloc[replacement_sample_idxs]
-
-    return observations, samples, p_theta, event_names
+    return obs, samples, p_theta, event_names

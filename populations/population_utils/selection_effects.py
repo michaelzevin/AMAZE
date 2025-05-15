@@ -13,8 +13,8 @@ import astropy.units as u
 from astropy import cosmology
 from astropy.cosmology import z_at_value
 
-import lal, lalsimulation
-from pycbc.detector import Detector
+#import lal, lalsimulation
+#from pycbc.detector import Detector
 
 cosmo = cosmology.Planck18
 
@@ -143,7 +143,7 @@ def get_detector(ifo):
 def snr(hpf, hxf, freqs, psd, **kwargs):
     """
     Calculates:
-    \rho^2 = 4 \int_{f_0}^{f_h} \frac{\tilde{h}^{\conj}(f)\tilde{h}(f)}{S(f)} df
+    rho^2 = 4 int_{f_0}^{f_h} frac{tilde{h}^{conj}(f)tilde{h}(f)}{S(f)} df
     """
     # read f_low, df or assume 10 Hz if not in kwargs
     f_low = kwargs["f_low"] if "f_low" in kwargs else 10.

@@ -89,14 +89,14 @@ def ErrorCheckIni(settings):
             raise ValueError("Branching fractions must sum to unity (yours sum to {0:0.2f})!".format(np.sum(betas)))
         # check that Nobs was specified if using mock observations
         if not settings['n-observations']:
-            raise ValueError("You need to specify and number of observations to be drawn from the 'true' model if not using GW observations!")
+            raise ValueError("You need to specify and number of observations to be drawn from the 'true' model if not using observations!")
         # check that the uncertainty method is valid
-        valid_uncertainties = ["delta", "gwevents", "snr"]
-        if settings['uncertainty'] not in valid_uncertainties:
-            raise ValueError("Unspecified measurement uncertainty procedure when using mock observations: '{0:s}' (valid uncertainties: {1:s})".format(settings['uncertainty'], ', '.join(valid_uncertainties)))
+        valid_uncertainties = ["delta", "events", "snr"]
+        if settings['mock-uncertainty'] not in valid_uncertainties:
+            raise ValueError("Unspecified measurement uncertainty procedure when using mock observations: '{0:s}' (valid uncertainties: {1:s})".format(settings['mock-uncertainty'], ', '.join(valid_uncertainties)))
         # If 'delta' measurement uncertainty is specified and >1 Nsamps give, spit out warning
-        if settings['uncertainty']=='delta' and settings['N-observations']>1:
-            warnings.warn("You specified delta-function observations but asked for more than one sample, only one sample will be used for each observations!\n")
+        if settings['mock-uncertainty']=='delta' and settings['n-observations']>1:
+            warnings.warn("You specified delta-function observations but asked for more than one sample, only one sample will be used for each observations!")
 
     else:
         # if not using mock observations, make sure event samples are provided
@@ -111,6 +111,18 @@ def ErrorCheckIni(settings):
 
     # Check that true model is provided if using mock observations
     if settings['true-model'] is not None:
+        if len(settings['true-model'].keys()) != len(settings['population-parameter-dict'].keys()):
+           raise ValueError("The number of parameters in the true model does not match the number of parameters in the population parameter dictionary.")
+        # make sure the hyperparameters of the true model are valid
+        for key, value in settings['true-model'].items():
+            if key not in settings['population-parameter-dict'].keys():
+                raise ValueError(f"Parameter {key} from your true model is not in the population parameter dictionary.")
+            if value not in settings['population-parameter-dict'][key]['values'].keys():
+                raise ValueError(f"Parameter {key} and value {value} from your true model is not in the population parameter dictionary.")
+
+    # Check that optimal SNRs and projection-factor Theta parameters are provided
+    #   if using mock observations with 'snr' mock measurement uncertainty
+    if settings['true-model'] is not None and settings['mock-uncertainty']=='snr':
         if len(settings['true-model'].keys()) != len(settings['population-parameter-dict'].keys()):
            raise ValueError("The number of parameters in the true model does not match the number of parameters in the population parameter dictionary.")
         # make sure the hyperparameters of the true model are valid

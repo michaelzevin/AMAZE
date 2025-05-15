@@ -47,6 +47,9 @@ def amaze(ini_file):
     #     for flows and models[channel][model] for KDEs
     if verbose:
         print("\nReading models, applying transformations, and initializing density estimates for astrophysical populations...\n")
+
+    # for specific case of mock observations with SNR-based uncertainties, need to read optimal SNRs
+    store_optimal_snrs = settings['true-model'] is not None and settings['mock-uncertainty']=='snr'
     model_names, pop_models = models.get_models(\
                 file_path = settings['path-to-populations'], \
                 channel_dict = settings['channels-dict'], \
@@ -54,10 +57,11 @@ def amaze(ini_file):
                 hyperparam_dict = settings['population-parameter-dict'], \
                 use_flows = settings['use-flows'], \
                 flow_path=settings['flow-model-path'], \
-                pdet_key=settings['pdet-key'], \
+                sensitivity=settings['sensitivity-key'], \
                 spinmag=settings['spin-mag-distribution'], \
                 max_samps=settings['kde-max-samples'], \
-                kde_bandwidth=settings['kde-bandwidth'])
+                kde_bandwidth=settings['kde-bandwidth'], \
+                store_optimal_snrs=store_optimal_snrs)
 
     #grab model hyperparameters from model input file
     model_names.sort()
@@ -77,11 +81,9 @@ def amaze(ini_file):
         hyperidx += 1
 
     if verbose:
-        print("")
-        print("Formation channels: [" + ", ".join(channels)+"]")
-        print("Astrophysical models: [" + ", ".join(model_names)+"]")
-        print("Parameters for inference: [" + ", ".join(settings['population-parameter-dict'])+"]")
-        print("")
+        print("\nFormation channels: [" + ", ".join(channels)+"]\n")
+        print("Astrophysical models: [" + ", ".join(model_names)+"]\n")
+        print("Parameters for inference: [" + ", ".join(settings['population-parameter-dict'])+"]\n\n")
 
     # --- Perform some checks to make sure everything is compatible
     helper_functions.ErrorCheckModels(model_names, channels, \
@@ -119,62 +121,66 @@ def amaze(ini_file):
                 for param in settings['event-parameter-dict'].keys():
                     print("      {0:s}: [{1:0.3f},{2:0.3f}]".format(param,\
                             mdl.sample_range[param][0], mdl.sample_range[param][1]))
-            print("")
 
 
     # --- Generate observations (shape: [observations, params, samples])
     if verbose:
-        print("Generating observations...\n")
+        print("\n\nGenerating observations...\n")
 
     # Calls observations.py to generate samples if argument is passed
     # NOTE: model0 denotes the 'true' model data if not using actual observations
     if not settings['true-model']:
         model0=None
-        observations, obsdata, p_theta, events = observations.read_observations(\
+        obs, obs_samples, p_theta, events = observations.read_observations(\
                     params=settings['event-parameter-dict'].keys(), \
-                    Nsamps=settings['N-samples'], \
+                    Nsamps=settings['n-samples'], \
                     obs_path=settings['event-samples-path'], \
                     events_to_exclude=settings['events-to-exclude'], \
                     prior_key=settings['event-level-prior'])
         if verbose:
-            print("Using the following {0:d} observations for inference:".format(len(events)))
-            print(*events)
-            print("")
-        pdb.set_trace()  # TEST ABOVE, but real observations should be good to go
-
+            print("Using the following {0:d} observations for inference: \n[".format(len(events)) + ", ".join(events) + "]\n")
     else:
         if verbose:
-            print("Drawing {0:d} observations from 'true' model, assuming that the branching fractions represent the *underlying* distribution, and using the '{1:s}' method for mock measurement uncertainty...".format(settings['n-observations'], settings['mock-uncertainty']))
+            print("Drawing {0:d} observations from 'true' model, assuming that the branching fractions represent the underlying distribution, and using the '{1:s}' method for mock measurement uncertainty...".format(settings['n-observations'], settings['mock-uncertainty']))
         rand_vars = np.random.random(size=settings['n-observations'])
         randlow_hold = 0
         for idx, channel in enumerate(model0):
             if settings['probabilistic-draws']==True:
-                Nobs_per_channel = len(np.where((rand_vars>=randlow_hold) & \
+                Nobs_from_channel = len(np.where((rand_vars>=randlow_hold) & \
                         (rand_vars<(randlow_hold+model0[channel].rel_frac)))[0])
                 randlow_hold += model0[channel].rel_frac
             else:
                 # first check that the (branching_fractions * Nobs) are integers
                 if not (settings['n-observations']*model0[channel].rel_frac).is_integer():
-                    warnings.warn("Number of observations is not divisble by detectable branching fractions provided, this may result in drawing a number of samples slighty different than what was specified!\n")
-                Nobs_per_channel = int(np.round(settings['n-observations'] * model0[channel].rel_frac))
+                    warnings.warn("Number of observations is not divisble by detectable branching fractions provided, this may result in drawing a number of samples slighty different than what was specified!")
+                Nobs_from_channel = int(np.round(settings['n-observations'] * model0[channel].rel_frac))
             # add attribute for number of observations drawn
-            model0[channel].Nobs_from_beta(Nobs_per_channel)
+            model0[channel].Nobs_from_beta(Nobs_from_channel)
+            # HERE: FIX UP MOCK UNCERTAINTY!!!
             if idx==0:
-                observations = model0[channel].generate_observations(Nobs_per_channel, args.uncertainty,\
-                    sample_from_kde=args.sample_from_kde, sensitivity=args.sensitivity, \
-                    multiproc=args.multiproc, verbose=verbose)
-                obsdata = model0[channel].measurement_uncertainty(args.Nsamps, \
-                    args.uncertainty, observation_noise=True, verbose=verbose)
+                obs = model0[channel].generate_observations(\
+                    Nobs=Nobs_from_channel, \
+                    verbose=verbose)
+                obs_samples = model0[channel].measurement_uncertainty(\
+                    Nsamps=settings['n-samples'], \
+                    method=settings['mock-uncertainty'], \
+                    observation_noise=True, \
+                    verbose=verbose)
             else:
-                observations = np.concatenate((observations, \
-                    model0[channel].generate_observations(Nobs_per_channel, args.uncertainty, \
-                    sample_from_kde=args.sample_from_kde, sensitivity=args.sensitivity, \
-                    multiproc=args.multiproc, verbose=verbose)))
-                obsdata = np.concatenate((obsdata, \
-                    model0[channel].measurement_uncertainty(args.Nsamps, \
-                    args.uncertainty, observation_noise=True, verbose=verbose)))
-        # assume equal prior weight for each posterior sample
-        p_theta = np.ones((obsdata.shape[0],obsdata.shape[1]))
+                obs = np.concatenate((obs, \
+                    model0[channel].generate_observations(\
+                    Nobs=Nobs_from_channel, \
+                    verbose=verbose)))
+                obs_samples = np.concatenate((obs_samples, \
+                    model0[channel].measurement_uncertainty(\
+                    Nsamps=settings['n-samples'], \
+                    method=settings['mock-uncertainty'], \
+                    observation_noise=True, \
+                    verbose=verbose)))
+        # assume equal prior weight for each mock posterior sample
+        p_theta = np.ones((obs_samples.shape[0],obs_samples.shape[2]))
+    pdb.set_trace()
+
 
     # Plot the KDEs and observations
     if use_flows==False:
@@ -185,8 +191,8 @@ def amaze(ini_file):
                 fixed_vals = [args.model0.split('/')[-1]]
             else:
                 fixed_vals = ['alpha10']
-            msplot.plot_1D_kdemodels(model_names, kde_models_detectable, params, observations, obsdata, \
-                model0, name=args.name, fixed_vals=fixed_vals, plot_obs=True, plot_obs_samples=False)
+            msplot.plot_1D_kdemodels(model_names, kde_models_detectable, params, #observations FIXME, \
+                obsdata, model0, name=args.name, fixed_vals=fixed_vals, plot_obs=True, plot_obs_samples=False)
             if verbose:
                 print("")
 
@@ -248,9 +254,6 @@ def amaze(ini_file):
             model_names.sort()
         # see if all models are at deepest level else repeat
         all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
-
-    if args.random_seed:
-        np.random.seed(args.random_seed)
 
     # --- Do the sampling!
     #Here we pass different args is we are doing discrete or continuous sampling of the population model parameters

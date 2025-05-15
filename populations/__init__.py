@@ -13,9 +13,10 @@ import numpy as np
 import scipy as sp
 import pandas as pd
 from scipy.stats import norm, truncnorm
-# from .population_utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults   # can we delete this?
 from .population_utils.bounded_Nd_kde import Bounded_Nd_kde
-from .population_utils.transform import mchirpq_to_m1m2, mtotq_to_m1m2, mtoteta_to_m1m2, chieff_to_s1s2, mtotq_to_mchirp, mtoteta_to_mchirpq, eta_to_q
+from .population_utils.transform import mtotq_to_mchirp, mtoteta_to_mchirpq, eta_to_q, mchirpq_to_m1m2
+from .population_utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults
+proj_factor = projection_factor_Dominik2015_interp()
 
 from astropy import cosmology
 from astropy.cosmology import z_at_value
@@ -23,17 +24,12 @@ import astropy.units as u
 cosmo = cosmology.Planck18
 
 # Need to ensure all parameters are normalized over the same range
-_posterior_sigmas = {"mchirp": 1.512, "q": 0.166, "chieff": 0.1043, "z": 0.0463}   # UPDATE
-_snrscale_sigmas = {"mchirp": 0.04, "eta": 0.03, "chieff": 0.14}      # UPDATE
+_posterior_sigmas = {"mchirp": 1.512, "q": 0.166, "chieff": 0.1043, "z": 0.0463}   # TOUPDATE
+_snrscale_sigmas = {"mchirp": 0.04, "eta": 0.03, "chieff": 0.14}      # TOUPDATE
 
 _normalization_bounds_defaults = {"mchirp": (0,100), "q": (0,1), "chieff": (-1,1), "z": (0,10)}
 _kde_bandwidth_default = 0.01
 _max_samps_default = int(1e5)
-
-# Get the interpolation function for the projection factor in Dominik+2015
-# which takes in a random number and spits out a projection factor 'w'
-#projection_factor_interp = projection_factor_Dominik2015_interp()
-# TODELETE
 
 """
 Set of classes used to construct statistical models of populations.
@@ -51,8 +47,8 @@ class Model(object):
 
 class KDEModel(Model):
     @staticmethod
-    def from_samples(label, samples, param_dict, pdet_key=None, max_samps=None, \
-                     kde_bandwidth=None, **kwargs):
+    def from_samples(label, samples, param_dict, sensitivity=None, \
+                     max_samps=None, kde_bandwidth=None, store_optimal_snrs=False, **kwargs):
         """
         Generate a KDE model instance from `samples`, where `params` are \
         series in the `samples` dataframe. Additional *kwargs* can be passed \
@@ -60,7 +56,7 @@ class KDEModel(Model):
         model, will assume this is the cosmological weight of each sample, and \
         will include this in the construction of all your KDEs. If `sensitivity` \
         is provided, samples used to generate the detection-weighted KDE will be \
-        weighted according to the key in the argument `pdet_*sensitivity*`.
+        weighted according to the key in the argument `pdet_${sensitivity}`.
 
         Inputs:
         label : str
@@ -69,17 +65,19 @@ class KDEModel(Model):
             binary samples from population synthesis.
         param_dict : dict
             dictionary of event-level parameters, including parameter bounds
-        pdet_key : str
-            dataframe column name for detection probability
+        sensitivity : str
+            dataframe column name for detection probability: 'pdet_${sensitivity}'
         max_samps : int
             maximum number of samples to use for each KDE
         kde_bandwidth : float
             bandwidth of KDEs
+        store_optimal_snrs : bool
+            whether to store optimal SNRs for each sample (only used if mock uncertainty is SNR-dependent)
         """
         # check that the provdided sensitivity series is in the dataframe
-        if pdet_key is not None:
-            if pdet_key not in samples.columns:
-                raise ValueError(f"{pdet_key} was specified for your detection weights, but cannot find this column in the samples datafarme!")
+        if sensitivity is not None:
+            if 'pdet_'+sensitivity not in samples.columns:
+                raise ValueError(f"{sensitivity} was specified for your detection weights, but cannot find the column 'pdet_{sensitivity}' in the samples datafarme!")
             # get *\alpha* for each model, defined as 
             #   \int p(\theta|\lambda) Pdet(\theta) d\theta
             # if cosmological weights are provided, do mock draws from the pop
@@ -88,26 +86,32 @@ class KDEModel(Model):
                     weights=(samples['weight']/len(samples)), replace=True)
             else:
                 mock_samp = samples.sample(int(1e6), replace=True)
-            alpha = np.sum(mock_samp[pdet_key]) / len(mock_samp)
+            alpha = np.sum(mock_samp['pdet_'+sensitivity]) / len(mock_samp)
         else:
             alpha = 1.0
+
+        # specify the series that we plan to keep along, adding weights and detection info to this
+        series_to_keep = list(param_dict.keys())
+        series_to_keep.extend(['weight'])
+        if 'weight' not in samples.keys():
+            samples['weight'] = np.ones(len(samples))
+
+        series_to_keep.extend(['pdet_'+sensitivity])
+        if not sensitivity:
+            samples['pdet_'] = np.ones(len(samples))
+
+        # get optimal SNRs for this sensitivity, if using SNR-dependent mock measurement uncertainty
+        series_to_keep.extend(['snropt_'+sensitivity])
+        if store_optimal_snrs:
+            if 'snropt_'+sensitivity not in samples.columns:
+                raise ValueError(f"To use SNR-dependent mock measurement uncertainty, you also need to supply optimal SNRs with the key 'snropt_{sensitivity}'")
+        else:
+            samples['snropt_'] = np.nan*np.ones(len(samples))
 
         # downsample population
         N_samps = max_samps if max_samps else _max_samps_default
         if len(samples) > N_samps:
             samples = samples.sample(N_samps)
-
-        ### GET WEIGHTS ###
-        # if cosmological weights are provided...
-        if 'weight' in samples.keys():
-            cosmo_weights = np.asarray(samples['weight'])
-        else:
-            cosmo_weights = np.ones(len(samples))
-        # if detection weights are provided...
-        if pdet_key is not None:
-            pdets = np.asarray(samples[pdet_key])
-        else:
-            pdets = np.ones(len(samples))
 
         # get normalization, revert to defaults if not specified
         params = list(param_dict.keys())
@@ -117,66 +121,51 @@ class KDEModel(Model):
                 if param_dict[p]['limits'] \
                 else _normalization_bounds_defaults[p]
 
-        # TODELETE
-        # get optimal SNRs for this sensitivity
-        #if sensitivity is not None:
-        #    optimal_snrs = np.asarray(samples['snropt_'+sensitivity])
-        #else:
-        #    optimal_snrs = np.nan*np.ones(len(samples))
-
         # get KDE bandwidth, revert to defaults if not specified
         bandwidth = kde_bandwidth if kde_bandwidth else _kde_bandwidth_default
 
-        # get samples for the parameters in question
-        kde_samples = pd.DataFrame(samples[params])
+        # get samples for the parameters in question, as well as weights/pdets/snrs
+        samples = pd.DataFrame(samples[series_to_keep])
 
-        return KDEModel(label, kde_samples, params, bandwidth, cosmo_weights, \
-                        pdets, alpha, normalization_bounds)
+        return KDEModel(label, samples, params, bandwidth, sensitivity, \
+                                alpha, normalization_bounds)
 
 
-    def __init__(self, label, samples, params, bandwidth, cosmo_weights, \
-                 pdets, alpha, normalization_bounds):
+    def __init__(self, label, samples, params, bandwidth, \
+                 sensitivity, alpha, normalization_bounds):
         super()
         self.label = label
         self.samples = samples
         self.params = params
         self.bandwidth = bandwidth
-        self.cosmo_weights = cosmo_weights
-        self.pdets = pdets
+        self.sensitivity = sensitivity
         self.alpha = alpha
         self.normalization_bounds = normalization_bounds
 
         # Save range of each parameter
         self.sample_range = {}
-        for param in samples.keys():
+        for param in params:
             self.sample_range[param] = (samples[param].min(), samples[param].max())
 
-        # Combine the cosmological and detection weights
-        if (cosmo_weights is not None):
-            weights = cosmo_weights / np.sum(cosmo_weights)
-        else:
-            weights = np.ones(len(samples))
-        weights /= np.sum(weights)
-        self.weights = weights
-        
         # Normalize data s.t. they all are on the unit cube
         bounds = list(normalization_bounds.values())
         self.bounds = bounds
-        samples = normalize_samples(np.asarray(samples), bounds)
+        kde_samples = normalize_samples(np.asarray(samples[params]), bounds)
         # also need to scale pdf by parameter range, so save this
         pdf_scale = scale_to_unity(bounds)
         self.pdf_scale = pdf_scale
 
         # add a little bit of scatter to samples that have the exact same values, as this will freak out the KDE generator
-        for idx, param in enumerate(samples.T):
-            if len(np.unique(param))==1:
-                samples[:,idx] += np.random.normal(loc=0.0, scale=1e-5, size=samples.shape[0])
+        for idx, param in enumerate(params):
+            if len(np.unique(kde_samples[:,idx]))==1:
+                kde_samples[:,idx] += np.random.normal(loc=0.0, scale=1e-5, size=kde_samples.shape[0])
 
         # Get the KDE objects, specify function for pdf
         # This custom KDE handles multiple dimensions, bounds, and weights, and takes in samples (Ndim x Nsamps)
-        kde = Bounded_Nd_kde(samples.T, weights=weights, bw_method=bandwidth, bounds=[(0,1)]*len(self.params))
+        kde = Bounded_Nd_kde(kde_samples.T, weights=samples['weight'], bw_method=bandwidth, bounds=[(0,1)]*len(params))
         self.pdf = lambda x: kde(normalize_samples(x, bounds).T) / pdf_scale
         self.kde = kde
+        self.kde_samples = kde_samples
 
         self.cached_values = None
 
@@ -265,7 +254,7 @@ class KDEModel(Model):
             likelihood = (q_weight * likelihood) + pi_reg
         return likelihood
 
-    def marginalize(self, params, alpha, bandwidth):
+    def marginalize(self, params):
         """
         Generate a new, lower dimensional, KDEModel from the parameters in [params]
         """
@@ -283,56 +272,26 @@ class KDEModel(Model):
                         self.alpha, norm_bounds)
 
 
-    def generate_observations(self, Nobs, uncertainty, sample_from_kde=False, sensitivity='design_network', multiproc=True, verbose=False):
+    def generate_observations(self, Nobs, verbose=False):
         """
-        Generates samples from KDE model. This will generated Nobs samples, storing the attribute 'self.observations' with dimensions [Nobs x Nparam]. 
+        Generates samples from density estimate model. This will generated Nobs samples, 
+          storing the attribute 'self.observations' with dimensions [Nobs x Nparam] 
         """
         if verbose:
-            print("   drawing {} observations from channel {}...".format(Nobs, self.label))
+            print("  drawing {} observations from channel {}...".format(Nobs, self.label))
 
-        ### If sample_from_KDE is specified... ###
-        # draw samples from the detection-weighted KDE, which is quicker,
-        # but not compatible with SNR-dependent uncertainty
-        if sample_from_kde==True:
-            if uncertainty=='snr':
-                raise ValueError("You cannot sample from the detection-weighted KDE with an SNR-dependent measurement uncertainty, since we need the detection probabilities and optimal SNRs of individual systems! If you wish to use SNR-weighted uncertainties, please do not use the argument 'sample-from-kde'.")
-            observations = self.sample(Nobs)
-            self.observations = observations
-            return observations
+        # get SNR threshold
+        self.snr_thresh = _PSD_defaults['snr_network'] if 'network' in self.sensitivity \
+            else _PSD_defaults['snr_single']
 
-        ### Otherwise, draw samples from the population used to construct the KDEs ###
-        self.snr_thresh = _PSD_defaults['snr_network'] if 'network' in sensitivity else _PSD_defaults['snr_single']
+        # choose detected systems based on cosmological weight and detection probability
+        obs = self.samples.sample(n=Nobs, weights=(self.samples['pdet_'+self.sensitivity]*self.samples['weight']))
 
-        # allocate empty arrays
-        observations = np.zeros((Nobs, self.samples.shape[-1]))
-        snrs = np.zeros(Nobs)
-        Thetas = np.zeros(Nobs)
+        # reset dataframe indices for observed samples
+        obs = obs.reset_index(drop=True)
 
-        # find indices for systems that can potentially be detected
-        # loop until we have enough systems with SNRs greater than the SNR threshold
-        recovered_idxs = []
-        for idx in tqdm(np.arange(Nobs), total=Nobs):
-            detected = False
-            while detected==False:
-                sys_idx = np.random.choice(np.arange(len(self.pdets)), p=(self.cosmo_weights/np.sum(self.cosmo_weights)))
-                pdet = self.pdets[sys_idx]
-                snr_opt = self.optimal_snrs[sys_idx]
-                Theta = float(projection_factor_interp(np.random.random()))
-
-                # if the SNR is greater than the threshold, the system is "observed"
-                if snr_opt*Theta >= self.snr_thresh:
-                    if sys_idx in recovered_idxs:
-                        continue
-                    detected = True
-                    observations[idx,:] = np.asarray(self.samples.iloc[sys_idx])
-                    snrs[idx] = snr_opt*Theta
-                    Thetas[idx] = Theta
-                    recovered_idxs.append(sys_idx)
-
-        self.observations = observations
-        self.snrs = snrs
-        self.Thetas = Thetas
-        return observations
+        self.observations = obs
+        return obs
 
 
     def measurement_uncertainty(self, Nsamps, method='delta', observation_noise=False, verbose=False):
@@ -340,26 +299,26 @@ class KDEModel(Model):
         Mocks up measurement uncertainty from observations using specified method
         """
         if verbose:
-            print("   mocking up observation uncertainties for the {} channel using the '{}' method...".format(self.label, method))
+            print("    mocking up observation uncertainties for the {} channel using the '{}' method...".format(self.label, method))
 
         params = self.params
 
         if method=='delta':
             # assume a delta function measurement
-            obsdata = np.expand_dims(self.observations, 1)
+            obsdata = np.expand_dims(self.observations, 2)
             return obsdata
 
-        # set up obsdata as [obs, samps, params]
-        obsdata = np.zeros((self.observations.shape[0], Nsamps, self.observations.shape[-1]))
+        # set up obsdata as [obs, params, samples]
+        obsdata = np.zeros((self.observations.shape[0], len(params), Nsamps))
         
         # for 'gwevents', assume snr-independent measurement uncertainty based on the typical values for events in the catalog
         if method == "gwevents":
-            for idx, obs in tqdm(enumerate(self.observations), total=len(self.observations)):
-                for pidx in np.arange(self.observations.shape[-1]):
-                    mu = obs[pidx]
-                    sigma = [_posterior_sigmas[param] for param in self.samples.columns][pidx]
-                    low_lim = self.normalization_bounds[pidx][0]
-                    high_lim = self.normalization_bounds[pidx][1]
+            for idx, obs in self.observations.iterrows():
+                for pidx, param in enumerate(self.params):
+                    mu = obs[param]
+                    sigma = _posterior_sigmas[param]
+                    low_lim = self.normalization_bounds[param][0]
+                    high_lim = self.normalization_bounds[param][1]
 
                     # construnct gaussian and drawn samples
                     dist = norm(loc=mu, scale=sigma)
@@ -377,35 +336,36 @@ class KDEModel(Model):
                     below_idxs = np.argwhere(samps<low_lim)
                     samps[below_idxs] = low_lim + (low_lim - samps[below_idxs])
 
-                    obsdata[idx, :, pidx] = samps
+                    obsdata[idx, pidx, :] = samps
 
 
         # for 'snr', use SNR-dependent measurement uncertainty following procedures from Fishbach, Holz, & Farr 2018 (2018ApJ...863L..41F)
+        # NOTE: this method is a bit of a hack, look into this more
         if method == "snr":
+            for idx, obs in self.observations.iterrows():
 
-            # to use SNR-dependent uncertainty, we need to make sure that the correct parameters are supplied
-
-            for idx, (obs,snr,Theta) in tqdm(enumerate(zip(self.observations, self.snrs, self.Thetas)), total=len(self.observations)):
-                # convert to mchirp, q
+                # to use SNR-dependent uncertainty, we need to make sure that chirp mass/mass ratio parameters are supplied
                 if set(['mchirp','q']).issubset(set(params)):
-                    mc_true = obs[params.index('mchirp')]
-                    q_true = obs[params.index('q')]
+                    mc_true = obs['mchirp']
+                    q_true = obs['q']
                 elif set(['mtot','q']).issubset(set(params)):
-                    mc_true = mtotq_to_mc(obs[params.index('mtot')], obs[params.index('q')])
-                    q_true = obs[params.index('q')]
+                    mc_true = mtotq_to_mchirp(obs['mtot'], obs['q'])
+                    q_true = obs['q']
                 elif set(['mtot','eta']).issubset(set(params)):
-                    mc_true, q_true = mtoteta_to_mchirpq(obs[params].index('mtot'), obs[params].index('q'))
+                    mc_true, q_true = mtoteta_to_mchirpq(obs['mtot'], obs['q'])
                 else:
-                    raise ValueError("You need to have a mass and mass ratio parameter to to SNR-weighted uncertainty!")
+                    raise ValueError("You need to have a mass and mass ratio parameter to use SNR-weighted uncertainty!")
 
-                z_true = obs[params.index('z')]
+                z_true = obs['z']
                 mcdet_true = mc_true*(1+z_true)
                 eta_true = q_true * (1+q_true)**(-2)
-                Theta_true = Theta
                 dL_true = cosmo.luminosity_distance(z_true).to(u.Gpc).value
+                # randomly choose projection factor according to the distribution from Dominik et al. 2015
+                Theta_true = proj_factor(np.random.random())
+                snr_true = obs['snropt_'+self.sensitivity] * Theta_true
 
                 # apply Gaussian noise to SNR
-                snr_obs = snr + np.random.normal(loc=0, scale=1)
+                snr_obs = snr_true + np.random.normal(loc=0, scale=1)
 
                 # get the snr-weighted sigma for the detector-frame chirp mass, and draw samples
                 mc_sigma = _snrscale_sigmas['mchirp']*self.snr_thresh / snr_obs
@@ -425,12 +385,12 @@ class KDEModel(Model):
 
                 # get samples for projection factor (use the true value as the observed value)
                 # Note that our Theta is the projection factor (between 0 and 1), rather than the Theta from Finn & Chernoff 1993
-                snr_opt = snr/Theta
+                snr_opt = obs['snropt_'+self.sensitivity]
                 Theta_sigma = 0.3 / (1.0 + snr_opt/self.snr_thresh)
-                Theta_samps = truncnorm.rvs(a=(0-Theta)/Theta_sigma, b=(1-Theta)/Theta_sigma, loc=Theta, scale=Theta_sigma, size=Nsamps)
+                Theta_samps = truncnorm.rvs(a=(0-Theta_true)/Theta_sigma, b=(1-Theta_true)/Theta_sigma, loc=Theta_true, scale=Theta_sigma, size=Nsamps)
 
                 # get luminosity distance and redshift observed samples
-                dL_samps = dL_true * (Theta_samps/Theta)
+                dL_samps = dL_true * (Theta_samps/Theta_true)
                 z_samps = np.asarray([z_at_value(cosmo.luminosity_distance, d) for d in dL_samps*u.Gpc])
 
                 # get source-frame chirp mass and other mass parameters
@@ -441,24 +401,24 @@ class KDEModel(Model):
 
                 for pidx, param in enumerate(params):
                     if param=='mchirp':
-                        obsdata[idx, :, pidx] = mc_samps
+                        obsdata[idx, pidx, :] = mc_samps
                     elif param=='mtot':
-                        obsdata[idx, :, pidx] = mtot_samps
+                        obsdata[idx, pidx, :] = mtot_samps
                     elif param=='q':
-                        obsdata[idx, :, pidx] = q_samps
+                        obsdata[idx, pidx, :] = q_samps
                     elif param=='eta':
-                        obsdata[idx, :, pidx] = eta_samps
+                        obsdata[idx, pidx, :] = eta_samps
                     elif param=='chieff':
-                        chieff_true = obs[params.index('chieff')]
+                        chieff_true = obs['chieff']
                         chieff_sigma = _snrscale_sigmas['chieff']*self.snr_thresh / snr_obs
                         if observation_noise==True:
                             chieff_obs = float(truncnorm.rvs(a=(-1-chieff_true)/chieff_sigma, b=(1-chieff_true)/chieff_sigma, loc=chieff_true, scale=chieff_sigma, size=1))
                         else:
                             chieff_obs = chieff_true
                         chieff_samps = truncnorm.rvs(a=(-1-chieff_obs)/chieff_sigma, b=(1-chieff_obs)/chieff_sigma, loc=chieff_obs, scale=chieff_sigma, size=Nsamps)
-                        obsdata[idx, :, pidx] = chieff_samps
+                        obsdata[idx, pidx, :] = chieff_samps
                     elif param=='z':
-                        obsdata[idx, :, pidx] = z_samps
+                        obsdata[idx, pidx, :] = z_samps
 
         return obsdata
 
