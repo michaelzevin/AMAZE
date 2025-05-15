@@ -13,6 +13,7 @@ __contributors__ = [
 
 # --- Import packages --- #
 import sys
+import os
 import argparse
 import h5py
 import warnings
@@ -26,6 +27,7 @@ import scipy.stats
 
 from populations import models, observations
 from sample import sample
+from plot import msplot
 import utils.helper_functions as helper_functions
 
 
@@ -35,6 +37,9 @@ def amaze(ini_file):
 
     # --- Error check the ini file
     helper_functions.ErrorCheckIni(settings)
+
+    # --- Create directory for plots and output samples
+    os.makedirs(settings['output-dir'], exist_ok=False)
 
     # --- Set random seed
     if settings['random-seed']:
@@ -156,7 +161,6 @@ def amaze(ini_file):
                 Nobs_from_channel = int(np.round(settings['n-observations'] * model0[channel].rel_frac))
             # add attribute for number of observations drawn
             model0[channel].Nobs_from_beta(Nobs_from_channel)
-            # HERE: FIX UP MOCK UNCERTAINTY!!!
             if idx==0:
                 obs = model0[channel].generate_observations(\
                     Nobs=Nobs_from_channel, \
@@ -183,27 +187,32 @@ def amaze(ini_file):
 
 
     # Plot the KDEs and observations
-    if use_flows==False:
-        if make_plots==True:
-            if verbose==True:
-                print("\nPlotting marginalized KDE models...")
-            if len(args.model0.split('/'))>1:
-                fixed_vals = [args.model0.split('/')[-1]]
-            else:
-                fixed_vals = ['alpha10']
-            msplot.plot_1D_kdemodels(model_names, kde_models_detectable, params, #observations FIXME, \
-                obsdata, model0, name=args.name, fixed_vals=fixed_vals, plot_obs=True, plot_obs_samples=False)
-            if verbose:
-                print("")
+    # NOTE: fixed_parameters needs to be specified by the user if inferring from observations!
+    if settings['make-plots']==True and settings['use-flows']==False:
+        if verbose==True:
+            print("\nPlotting marginalized KDE models...\n")
+        msplot.plot_1D_kdemodels(\
+                model_names=model_names, \
+                models=pop_models, \
+                model0=model0, \
+                event_parameters=settings['event-parameter-dict'], \
+                population_parameters=settings['population-parameter-dict'], \
+                observations=obs, \
+                samples=obs_samples, \
+                name=settings['output-name'], \
+                fixed_parameters=['chi01','alpha10'], \
+                plot_obs=True, \
+                plot_obs_samples=False)
 
     # --- Prepare population models
     # If using Flows, train or load a previously trained model for each formation channel
-    # If using KDEs, freeze sample evaluations in each model. 
+    # If using KDEs, freeze sample evaluations in each model
     # This is time consuming, but only needs to be done once for each KDE model, 
-    # so we don't need to recompute p_model(data) over and over again when the 
-    # observation values aren't going to change.
+    #   so we don't need to recompute p_model(data) over and over again when the 
+    #   observation values aren't going to change.
 
     if use_flows==True:
+        # MJZ: Haven't touched this yet
         if verbose:
             print('Training/Loading flows')
         for i, channel in enumerate(channels):

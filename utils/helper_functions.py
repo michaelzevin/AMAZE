@@ -1,6 +1,7 @@
 import configparser
 import ast
 import warnings
+import os
 
 import numpy as np
 
@@ -69,6 +70,11 @@ def ErrorCheckIni(settings):
     """
     Checks for errors in the INI file sections.
     """
+    # Check that output directory does not already exist
+    if settings['output-dir'] is not None:
+        if os.path.exists(settings['output-dir']):
+            raise ValueError("Output directory already exists! Please choose a different output directory.")
+
     # Check consistency between flows and continuous sample specifications
     if settings['use-flows']==False and settings['continuous-sampling']==True:
         raise ValueError('Cannot use KDEs for continuous inference (you set use-flows==False and continuous-sampling==True).')
@@ -97,7 +103,6 @@ def ErrorCheckIni(settings):
         # If 'delta' measurement uncertainty is specified and >1 Nsamps give, spit out warning
         if settings['mock-uncertainty']=='delta' and settings['n-observations']>1:
             warnings.warn("You specified delta-function observations but asked for more than one sample, only one sample will be used for each observations!")
-
     else:
         # if not using mock observations, make sure event samples are provided
         if settings['event-samples-path'] is None:
