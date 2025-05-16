@@ -71,6 +71,8 @@ def amaze(ini_file):
 
     # sort channels in alphabetical order
     channels = sorted(list(pop_models.keys()))
+    #find name of observational parameters
+    params = list(settings['event-parameter-dict'].keys())
 
     # create dict for the hyperparameters at each level
     hyperparam_dict  = {}
