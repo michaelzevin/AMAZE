@@ -565,10 +565,10 @@ class FlowModel(Model):
             channel_json = old_config
 
         #write this channels config to file
-        with open(f'{filepath}flowconfig.json', 'w') as f:
+        with open(f'{filepath}/flowconfig.json', 'w') as f:
             json.dump(channel_json, f)
 
-        save_filename = f'{filepath}{self.channel_label}'
+        save_filename = f'{filepath}/{self.channel_label}'
         #train the normalising flow
         self.flow.trainval(lr, epochs, batch_no, save_filename, training_data, val_data)
 
@@ -584,8 +584,8 @@ class FlowModel(Model):
             Device on which to run the flow. Either is 'cpu', otherwise choose 'cuda:X' where X is the GPU slot.
         """
         #load no. transforms, no. neurons and no. bins from config if config for flows exists
-        if os.path.isfile(f'{filepath}flowconfig.json'):
-            with open(f'{filepath}flowconfig.json', 'r') as f:
+        if os.path.isfile(f'{filepath}/flowconfig.json'):
+            with open(f'{filepath}/flowconfig.json', 'r') as f:
                 config = json.load(f)
             #load flow hyperparameters, set to defaults if not found
             try:
@@ -612,7 +612,7 @@ class FlowModel(Model):
                             self.param_dict[param][key] = config[self.channel_label][key]
             except:
                 #deal with old hardcoding mapping saving
-                mappings = np.load(f'{filepath}{self.channel_label}_mappings.npy', allow_pickle=True)
+                mappings = np.load(f'{filepath}/{self.channel_label}_mappings.npy', allow_pickle=True)
                 self.param_dict['mchirp']['transf'] = 'logit'
                 self.param_dict['q']['transf'] = 'logit'
                 self.param_dict['chieff']['transf'] = 'tanh'
@@ -634,7 +634,7 @@ class FlowModel(Model):
             self.total_smdls, RNVP=False, device=device)
         
         #load in actual flow model
-        self.flow.load_model(f'{filepath}{self.channel_label}.pt')
+        self.flow.load_model(f'{filepath}/{self.channel_label}.pt')
 
     def get_alpha(self, hyperparams):
         """

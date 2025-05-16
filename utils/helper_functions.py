@@ -86,7 +86,7 @@ def ErrorCheckIni(settings):
         if not settings['n-observations']:
             raise ValueError("You need to specify and number of observations to be drawn from the 'true' model if not using GW observations!")
         # check that the uncertainty method is valid
-        valid_uncertainties = ["delta", "gwevents", "snr"]
+        valid_uncertainties = ["delta", "gwevents", "snr", "posteriors"]
         if settings['uncertainty'] not in valid_uncertainties:
             raise ValueError("Unspecified measurement uncertainty procedure when using mock observations: '{0:s}' (valid uncertainties: {1:s})".format(settings['uncertainty'], ', '.join(valid_uncertainties)))
         # If 'delta' measurement uncertainty is specified and >1 Nsamps give, spit out warning
