@@ -18,9 +18,6 @@ key containing the posterior samples should be consistent with the naming
 scheme of GWTC-3.
 """
 
-# can exclude a subset of events to use by specifying in the list below
-_events_to_exclude=['GW190521']
-
 # specify the hdf5 key for the approximant being used
 _posterior_key = "combined"
 

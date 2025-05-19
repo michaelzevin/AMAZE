@@ -4,6 +4,7 @@ import warnings
 import os
 
 import numpy as np
+from copy import deepcopy
 
 from functools import reduce
 import operator
@@ -16,7 +17,7 @@ def GetFromDict(dataDict, mapList):
     return reduce(operator.getitem, mapList, dataDict)
 
 def SetInDict(dataDict, mapList, value):
-    getFromDict(dataDict, mapList[:-1])[mapList[-1]] = value
+    GetFromDict(dataDict, mapList[:-1])[mapList[-1]] = value
 
 def ParseIniFile(file_path):
     """
@@ -73,7 +74,7 @@ def ErrorCheckIni(settings):
     # Check that output directory does not already exist
     if settings['output-dir'] is not None:
         if os.path.exists(settings['output-dir']):
-            raise ValueError("Output directory already exists! Please choose a different output directory.")
+            warnings.warn("Output directory already exists! Continuing will overwrite files in the existing directory {:s}.".format(settings['output-dir']), stacklevel=2)
 
     # Check consistency between flows and continuous sample specifications
     if settings['use-flows']==False and settings['continuous-sampling']==True:
@@ -181,3 +182,37 @@ def ErrorCheckModels(model_names, channels, Nhyper, true_model):
                 if sorted(hyper_set) != sorted(channel_set):
                     raise ValueError("At hyperparameter level {0:d}, the formation channel {1:s} does not have the same hyperparameters as the rest of the models (all models: {2:s}, {1:s}: {3:s}".format(i, channel, ','.join(hyper_set), ','.join(channel_set)))
         i += 1
+
+
+def GetDeepestModels(model_names, models, hyperparam_dict, use_flows=False):
+    # --- Copy kde_models so that they all have the same levels of hyperparameters
+    # FIXME: @Storm, is there a way to make it more clear what the flows are doing? 
+    #   Maybe a separate while loop if use-flows is true?
+    Nhyper = len(hyperparam_dict.keys())
+    all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
+
+    while all_models_at_deepest==False:
+        # loop until all models have the same length
+        for model in model_names:
+            # See number of hyperparameters in model, subtract one for channel
+            Nhyper_in_model = len(model.split('/'))-1
+            if use_flows==False:
+                kde_hold = GetFromDict(models, model.split('/'))
+            # loop until this model has all the hyperparam levels as well
+            while Nhyper_in_model < Nhyper:
+                if use_flows==False:
+                    # remove kde model from old level
+                    SetInDict(models, model.split('/'), {})
+                model_names.remove(model)
+                for new_hyperparam in hyperparam_dict[Nhyper_in_model]:
+                    if use_flows==False:
+                        # copy the same kde model for the higher hyperparam level
+                        new_kde = deepcopy(kde_hold)
+                        new_level = model.split('/') + [new_hyperparam]
+                        SetInDict(models, new_level, new_kde)
+                    # add new model name
+                    model_names.append(model+'/'+new_hyperparam)
+                Nhyper_in_model += 1
+        # see if all models are at deepest level else repeat
+        all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
+    return model_names, models

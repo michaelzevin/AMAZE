@@ -48,7 +48,8 @@ class Model(object):
 class KDEModel(Model):
     @staticmethod
     def from_samples(label, samples, param_dict, sensitivity=None, \
-                     max_samps=None, kde_bandwidth=None, store_optimal_snrs=False, **kwargs):
+                        max_samps=None, kde_bandwidth=None, \
+                        store_optimal_snrs=False, **kwargs):
         """
         Generate a KDE model instance from `samples`, where `params` are \
         series in the `samples` dataframe. Additional *kwargs* can be passed \
@@ -96,17 +97,20 @@ class KDEModel(Model):
         if 'weight' not in samples.keys():
             samples['weight'] = np.ones(len(samples))
 
-        series_to_keep.extend(['pdet_'+sensitivity])
         if not sensitivity:
             samples['pdet_'] = np.ones(len(samples))
+            series_to_keep.extend(['pdet_'])
+        else:
+            series_to_keep.extend(['pdet_'+sensitivity])
 
         # get optimal SNRs for this sensitivity, if using SNR-dependent mock measurement uncertainty
-        series_to_keep.extend(['snropt_'+sensitivity])
         if store_optimal_snrs:
             if 'snropt_'+sensitivity not in samples.columns:
                 raise ValueError(f"To use SNR-dependent mock measurement uncertainty, you also need to supply optimal SNRs with the key 'snropt_{sensitivity}'")
+            series_to_keep.extend(['snropt_'+sensitivity])
         else:
             samples['snropt_'] = np.nan*np.ones(len(samples))
+            series_to_keep.extend(['snropt_'])
 
         # downsample population
         N_samps = max_samps if max_samps else _max_samps_default
@@ -132,7 +136,8 @@ class KDEModel(Model):
 
 
     def __init__(self, label, samples, params, bandwidth, \
-                 sensitivity, alpha, normalization_bounds):
+                    sensitivity, alpha, normalization_bounds, \
+                    detectable=False):
         super()
         self.label = label
         self.samples = samples
@@ -141,6 +146,7 @@ class KDEModel(Model):
         self.sensitivity = sensitivity
         self.alpha = alpha
         self.normalization_bounds = normalization_bounds
+        self.detectable = detectable
 
         # Save range of each parameter
         self.sample_range = {}
@@ -162,7 +168,11 @@ class KDEModel(Model):
 
         # Get the KDE objects, specify function for pdf
         # This custom KDE handles multiple dimensions, bounds, and weights, and takes in samples (Ndim x Nsamps)
-        kde = Bounded_Nd_kde(kde_samples.T, weights=samples['weight'], bw_method=bandwidth, bounds=[(0,1)]*len(params))
+        if detectable==True:
+            w = samples['weight'] * samples['pdet_'+sensitivity]
+        else:
+            w = samples['weight']
+        kde = Bounded_Nd_kde(kde_samples.T, weights=w, bw_method=bandwidth, bounds=[(0,1)]*len(params))
         self.pdf = lambda x: kde(normalize_samples(x, bounds).T) / pdf_scale
         self.kde = kde
         self.kde_samples = kde_samples
@@ -189,47 +199,74 @@ class KDEModel(Model):
         """
         self.Nobs_from_beta = Nobs
 
-    def freeze(self, data, smallest_N, data_pdf=None, multiproc=True):
+    def freeze(self, data, smallest_N, data_prior=None, multiproc=False):
         """
-        Caches the values of the model likelihood at the data points provided. This \
-        is useful to construct the hierarchal model likelihood since it \
-        is evaluated many times, but only needs to be once \
+        Caches the values of the model likelihood at the data points provided. This
+        is useful to construct the hierarchal model likelihood since it
+        is evaluated many times, but only needs to be once
         because it's a fixed value, dependent only on the observations
         """
         self.cached_values = None
-        data_pdf = data_pdf if data_pdf is not None else np.ones((data.shape[0],data.shape[1]))
+        data_prior = data_prior if data_prior is not None else np.ones((data.shape[0],data.shape[1]))
         likelihood_vals = []
 
-        if multiproc==True:
-
+        if multiproc == False:
+            for (d,d_prior) in tqdm(zip(data,data_prior), total=len(data)):
+                d = d.reshape((1, d.shape[0], d.shape[1]))
+                d_prior = d_prior.reshape((1, d_prior.shape[0]))
+                likelihood_vals.append(self(d, smallest_N, d_prior))
+        else:
+            # FIXME: this is not working
             processes = []
-            manager = multiprocessing.Manager()
-            return_dict = manager.dict()
-            for idx, (d,d_pdf) in tqdm(enumerate(zip(data,data_pdf)), total=len(data)):
+            for (d,d_prior) in zip(data,data_prior):
+                d = d.reshape((1, d.shape[0], d.shape[1]))
+                d_prior = d_prior.reshape((1, d_prior.shape[0]))
+                p = multiprocessing.Process(target=self, args=(d, smallest_N, d_prior))
+                processes.append(p)
+
+            for p in tqdm(processes):
+                p.start()
+            
+            #func = partial(self, smallest_N=smallest_N)
+            # get data in correct format for initializing multiple processes
+            #with multiprocessing.Pool(processes=4) as pool:
+                # run the likelihood function in parallel
+            #    likelihood_vals = list(tqdm(pool.starmap(func, zip(data, data_prior)), total=len(data)))
+            # get data in correct format for initializing multiple processes
+            """multiproc_data = []
+            for (d,d_pdf) in zip(data,data_prior):
+                d = d.reshape((1, d.shape[0], d.shape[1]))
+                d_pdf = d_pdf.reshape((1, d_pdf.shape[0])) 
+                multiproc_data.append((d, smallest_N, d_pdf))"""
+
+            # run multiprocessing
+            #with multiprocessing.Pool(processes=Nproc) as pool:
+            #    likelihood_vals = list(tqdm(pool.starmap(test, multiproc_data), \
+            #                                total=len(multiproc_data)))
+            #pool = multiprocessing.Pool(processes=Nproc)
+            #manager = multiprocessing.Manager()
+            #return_dict = manager.dict()
+            """processes = []
+            for idx, (d,d_pdf) in tqdm(enumerate(zip(data,data_prior)), total=len(data)):
                 d = d.reshape((1, d.shape[0], d.shape[1]))
                 d_pdf = d_pdf.reshape((1, d_pdf.shape[0]))
-                p = multiprocessing.Process(target=self, args=(d,smallest_N,d_pdf,idx,return_dict,))
+                p = multiprocessing.Process(target=self, args=(d,smallest_N,d_pdf,))
                 processes.append(p)
                 p.start()
             for process in processes:
-                process.join()
+                process.join()"""
 
-            for i in sorted(list(return_dict.keys())):
-                likelihood_vals.append(return_dict[i])
-        else:
-            for idx, (d,d_pdf) in tqdm(enumerate(zip(data,data_pdf)), total=len(data)):
-                d = d.reshape((1, d.shape[0], d.shape[1]))
-                d_pdf = d_pdf.reshape((1, d_pdf.shape[0]))
-                likelihood_vals.append(self(d, smallest_N, d_pdf))
+            """for i in sorted(list(return_dict.keys())):
+                likelihood_vals.append(return_dict[i])"""
 
         likelihood_vals = np.asarray(likelihood_vals).flatten()
         self.cached_values = likelihood_vals
 
-    def __call__(self, data, smallest_N, data_pdf=None, proc_idx=None, return_dict=None):
+    def __call__(self, data, smallest_N=None, data_prior=None):#, proc_idx=None, return_dict=None):
         """
         Calculate the likelihood of the observations give a particular hypermodel. \
         The expectation is that "data" is a [Nobs x Nsample x Nparams] array. \
-        If data_pdf is None, each observation is expected to have equal \
+        If data_prior is None, each observation is expected to have equal \
         posterior probability. Otherwise, the prior weights should be \
         provided as the dimemsions [samples(Nobs), samples(Nsamps)].
         """
@@ -237,24 +274,24 @@ class KDEModel(Model):
             return self.cached_values
 
         likelihood = np.ones(data.shape[0]) * 1e-50
-        data_pdf = data_pdf if data_pdf is not None else np.ones((data.shape[0],data.shape[1]))
-        data_pdf[data_pdf==0] = 1e-50
-        for idx, (obs, d_pdf) in enumerate(zip(np.atleast_3d(data),data_pdf)):
+        data_prior = data_prior if data_prior is not None else np.ones((data.shape[0],data.shape[1]))
+        data_prior[data_prior==0] = 1e-50
+        for idx, (obs, d_pdf) in enumerate(zip(np.atleast_3d(data),data_prior)):
             # Evaluate the KDE at the samples
             likelihood_per_samp = self.pdf(obs) / d_pdf
             likelihood[idx] += (1.0/len(obs)) * np.sum(likelihood_per_samp)
-        # store value for multiprocessing
-        if return_dict is not None:
-            return_dict[proc_idx] = likelihood
+        # store value for multiprocessing TODELETE
+        #if return_dict is not None:
+        #    return_dict[proc_idx] = likelihood
 
         if smallest_N is not None:
-            #population probability plus uniform regularisation
+            # population probability plus uniform regularisation
             pi_reg = 1/(smallest_N+1)
             q_weight = smallest_N/(smallest_N+1)
             likelihood = (q_weight * likelihood) + pi_reg
         return likelihood
 
-    def marginalize(self, params):
+    def marginalize(self, params, bandwidth=None, detectable=False):
         """
         Generate a new, lower dimensional, KDEModel from the parameters in [params]
         """
@@ -267,9 +304,10 @@ class KDEModel(Model):
         for p in params:
             norm_bounds[p] = self.normalization_bounds[p]
 
-        return KDEModel(label, self.samples[params], params, \
-                        self.bandwidth, self.cosmo_weights, self.pdets, \
-                        self.alpha, norm_bounds)
+        return KDEModel(label, self.samples, params, \
+                        bandwidth, sensitivity=self.sensitivity, \
+                        alpha=1.0, normalization_bounds=norm_bounds, \
+                        detectable=detectable)
 
 
     def generate_observations(self, Nobs, verbose=False):
@@ -309,10 +347,10 @@ class KDEModel(Model):
             return obsdata
 
         # set up obsdata as [obs, params, samples]
-        obsdata = np.zeros((self.observations.shape[0], len(params), Nsamps))
+        obsdata = np.zeros((self.observations.shape[0], Nsamps, len(params)))
         
         # for 'gwevents', assume snr-independent measurement uncertainty based on the typical values for events in the catalog
-        if method == "gwevents":
+        if method == "events":
             for idx, obs in self.observations.iterrows():
                 for pidx, param in enumerate(self.params):
                     mu = obs[param]
@@ -336,7 +374,7 @@ class KDEModel(Model):
                     below_idxs = np.argwhere(samps<low_lim)
                     samps[below_idxs] = low_lim + (low_lim - samps[below_idxs])
 
-                    obsdata[idx, pidx, :] = samps
+                    obsdata[idx, :, pidx] = samps
 
 
         # for 'snr', use SNR-dependent measurement uncertainty following procedures from Fishbach, Holz, & Farr 2018 (2018ApJ...863L..41F)
@@ -401,13 +439,13 @@ class KDEModel(Model):
 
                 for pidx, param in enumerate(params):
                     if param=='mchirp':
-                        obsdata[idx, pidx, :] = mc_samps
+                        obsdata[idx, :, pidx] = mc_samps
                     elif param=='mtot':
-                        obsdata[idx, pidx, :] = mtot_samps
+                        obsdata[idx, :, pidx] = mtot_samps
                     elif param=='q':
-                        obsdata[idx, pidx, :] = q_samps
+                        obsdata[idx, :, pidx] = q_samps
                     elif param=='eta':
-                        obsdata[idx, pidx, :] = eta_samps
+                        obsdata[idx, :, pidx] = eta_samps
                     elif param=='chieff':
                         chieff_true = obs['chieff']
                         chieff_sigma = _snrscale_sigmas['chieff']*self.snr_thresh / snr_obs
@@ -416,9 +454,9 @@ class KDEModel(Model):
                         else:
                             chieff_obs = chieff_true
                         chieff_samps = truncnorm.rvs(a=(-1-chieff_obs)/chieff_sigma, b=(1-chieff_obs)/chieff_sigma, loc=chieff_obs, scale=chieff_sigma, size=Nsamps)
-                        obsdata[idx, pidx, :] = chieff_samps
+                        obsdata[idx, :, pidx] = chieff_samps
                     elif param=='z':
-                        obsdata[idx, pidx, :] = z_samps
+                        obsdata[idx, :, pidx] = z_samps
 
         return obsdata
 
@@ -449,4 +487,3 @@ def scale_to_unity(bounds):
     ranges = [b[1]-b[0] for b in bounds]
     scale_factor = np.prod(ranges)
     return scale_factor
-
