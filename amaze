@@ -295,6 +295,7 @@ def amaze(ini_file):
 
     # Get detectable branching fractions as well as underlying
     # FIXME: Can we get this working for flows? I know it requires additions.
+    detectable_samples=None
     if settings['use-flows']==False:
         if verbose:
             print("Converting underlying betas from sampler to detectable betas...\n")
@@ -306,54 +307,19 @@ def amaze(ini_file):
                         branching_fractions = settings['branching-fractions'], \
                         model0=model0, \
                         true_model=true_model)
-    pdb.set_trace()
+
 
     # --- Print summary info about the sampling
     if verbose:
         print("Sample breakdown:")
-        recovered_vals = {}
-        smdls = list(set([x.split('/',1)[1] for x in model_names]))
-        for smdl in sorted(smdls):
-            recovered_vals[smdl] = {}
-            hyperparams = smdl.split('/')
-            # loop over hyperparams to get matching samples
-            for idx, param in enumerate(hyperparams):
-                hyper_idx = list(submodels_dict[idx].keys())[list(submodels_dict[idx].values()).index(param)]
-                if idx==0:
-                    matching_samps = samples[samples[:,idx] == hyper_idx]
-                    #matching_samps_detectable = detectable_samples[detectable_samples[:,idx] == hyper_idx]
-                else:
-                    matching_samps = matching_samps[matching_samps[:,idx] == hyper_idx]
-                    #matching_samps_detectable = matching_samps_detectable[matching_samps_detectable[:,idx] == hyper_idx]
-            # get counts in this model
-            counts = matching_samps.shape[0]
-            recovered_vals[smdl]['counts'] = counts
-            # get betas for this model from each channel
-            recovered_vals[smdl]['betas'] = {}
-            recovered_vals[smdl]['betas_detectable'] = {}
-            for cidx, channel in enumerate(channels):
-                # append beta values for this model
-                if counts > 0:
-                    beta = matching_samps[:,Nhyper+cidx]
-                    beta = round(np.mean(beta), 3)
-                    #beta_detectable = matching_samps_detectable[:,Nhyper+cidx]
-                    #beta_detectable = round(np.mean(beta_detectable), 3)
-                else:
-                    beta = np.nan
-                    #beta_detectable = np.nan
-                recovered_vals[smdl]['betas'][channel] = beta
-                #recovered_vals[smdl]['betas_detectable'][channel] = beta_detectable
-
-        # print everything
-        for smdl in sorted(smdls):
-            sample_counts = recovered_vals[smdl]['counts']
-            sample_betas = recovered_vals[smdl]['betas']
-            sample_betas_detectable = recovered_vals[smdl]['betas_detectable']
-            print("  Model {0:s}".format(smdl))
-            print("     {0:d} samples".format(sample_counts))
-            print("     betas={0}".format(list(sample_betas.items())))
-            print("     detectable betas={0}".format(list(sample_betas_detectable.items())))
-        print("")
+        helper_functions.PrintSummaryStatistics(\
+                    samples=samples, \
+                    samples_det=detectable_samples, \
+                    model_names=model_names, \
+                    channels_dict=settings['channels-dict'], \
+                    pop_param_dict=settings['population-parameter-dict'], \
+                    submodels_dict=submodels_dict)
+    pdb.set_trace()
 
 
     # Plot samples and histograms of betas per model
@@ -440,8 +406,6 @@ def amaze(ini_file):
         df = pd.DataFrame(lnprb, columns=['lnprb'])
         df.to_hdf(fname, key='model_selection/lnprb')
 
-
-    print_file.close()
 
 # Run main AMAZE function
 if __name__ == "__main__":

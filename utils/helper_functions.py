@@ -4,6 +4,7 @@ import warnings
 import os
 
 import numpy as np
+np.set_printoptions(legacy='1.25') #so datatypes aren't printed
 from copy import deepcopy
 
 from functools import reduce
@@ -11,7 +12,8 @@ import operator
 
 __all__ = ['GetFromDict','SetInDict','ParseIniFile',\
             'ErrorCheckIni','ErrorCheckModels',\
-            'GetDeepestModels','DetectableBranchingFractions']
+            'GetDeepestModels','DetectableBranchingFractions',\
+            'PrintSummaryStatistics']
 
 # --- Useful functions for accessing items in KDE dictionary
 def GetFromDict(dataDict, mapList):
@@ -219,6 +221,10 @@ def GetDeepestModels(model_names, models, hyperparam_dict, use_flows=False):
     return model_names, models
 
 def DetectableBranchingFractions(samples, model_names, models, submodels_dict, branching_fractions, model0, true_model):
+    """
+    Calculates detectable branching fractions after the inference is run
+    Currently only supported for discrete inference
+    """
     channels = list(branching_fractions.keys())
     detectable_samples = samples.copy()
     smdls = list(set([x.split('/',1)[1] for x in model_names]))
@@ -255,3 +261,61 @@ def DetectableBranchingFractions(samples, model_names, models, submodels_dict, b
                 model0[channel].rel_frac_detectable(converted_rel_fracs[cidx])
 
     return detectable_samples, model0
+
+def PrintSummaryStatistics(samples, samples_det, model_names, \
+                           channels_dict, pop_param_dict, submodels_dict):
+    """
+    Print summary statistics for inference
+    """
+    channels = list(channels_dict.keys())
+    Nhyper = len(list(pop_param_dict.keys()))
+
+    recovered_vals = {}
+    smdls = list(set([x.split('/',1)[1] for x in model_names]))
+    for smdl in sorted(smdls):
+        recovered_vals[smdl] = {}
+        hyperparams = smdl.split('/')
+        # loop over hyperparams to get matching samples
+        for idx, param in enumerate(hyperparams):
+            hyper_idx = list(submodels_dict[idx].keys())[list(submodels_dict[idx].values()).index(param)]
+            if idx==0:
+                matching_samps = samples[samples[:,idx] == hyper_idx]
+                if samples_det is not None:
+                    matching_samps_detectable = samples_det[samples_det[:,idx] == hyper_idx]
+            else:
+                matching_samps = matching_samps[matching_samps[:,idx] == hyper_idx]
+                if samples_det is not None:
+                    matching_samps_detectable = matching_samps_detectable[matching_samps_detectable[:,idx] == hyper_idx]
+        # get counts in this model
+        counts = matching_samps.shape[0]
+        recovered_vals[smdl]['counts'] = counts
+        # get betas for this model from each channel
+        recovered_vals[smdl]['betas'] = {}
+        recovered_vals[smdl]['betas_detectable'] = {}
+        for cidx, channel in enumerate(channels):
+            # append beta values for this model
+            if counts > 0:
+                beta = matching_samps[:,Nhyper+cidx]
+                beta = round(np.mean(beta), 3)
+                if samples_det is not None:
+                    beta_detectable = matching_samps_detectable[:,Nhyper+cidx]
+                    beta_detectable = round(np.mean(beta_detectable), 3)
+            else:
+                beta = np.nan
+                if samples_det is not None:
+                    beta_detectable = np.nan
+            recovered_vals[smdl]['betas'][channel] = beta
+            if samples_det is not None:
+                recovered_vals[smdl]['betas_detectable'][channel] = beta_detectable
+
+    # print everything
+    for smdl in sorted(smdls):
+        sample_counts = recovered_vals[smdl]['counts']
+        sample_betas = recovered_vals[smdl]['betas']
+        sample_betas_detectable = recovered_vals[smdl]['betas_detectable']
+        print("  Model {:s}".format(smdl))
+        print("    {:d} samples ({:0.2f}%)".format(sample_counts, 100*(sample_counts/len(samples))))
+        print("    betas={}".format(list(sample_betas.items())))
+        if samples_det is not None:
+            print("    detectable betas={}".format(list(sample_betas_detectable.items())))
+    print("")
