@@ -10,7 +10,8 @@ from functools import reduce
 import operator
 
 __all__ = ['GetFromDict','SetInDict','ParseIniFile',\
-           'ErrorCheckIni','ErrorCheckModels']
+            'ErrorCheckIni','ErrorCheckModels',\
+            'GetDeepestModels','DetectableBranchingFractions']
 
 # --- Useful functions for accessing items in KDE dictionary
 def GetFromDict(dataDict, mapList):
@@ -216,3 +217,41 @@ def GetDeepestModels(model_names, models, hyperparam_dict, use_flows=False):
         # see if all models are at deepest level else repeat
         all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
     return model_names, models
+
+def DetectableBranchingFractions(samples, model_names, models, submodels_dict, branching_fractions, model0, true_model):
+    channels = list(branching_fractions.keys())
+    detectable_samples = samples.copy()
+    smdls = list(set([x.split('/',1)[1] for x in model_names]))
+    # get the conversion factors between the detectable and underlying distributions
+    for smdl in sorted(smdls):
+        detectable_convfacs = []
+        for channel in channels:
+            detectable_convfacs.append(GetFromDict(models, [channel]+smdl.split('/')).alpha)
+        detectable_convfacs = np.asarray(detectable_convfacs)
+        # loop over hyperparams to get samples in this submodel
+        hyperparams = smdl.split('/')
+        for idx, param in enumerate(hyperparams):
+            hyper_idx = list(submodels_dict[idx].keys())[list(submodels_dict[idx].values()).index(param)]
+            if idx==0:
+                matching_idxs = np.where(samples[:,idx] == hyper_idx)[0]
+                matching_samps = samples[matching_idxs]
+            else:
+                matching_idxs = matching_idxs[np.where(matching_samps[:,idx] == hyper_idx)[0]]
+                matching_samps = samples[matching_idxs]
+        # if no samples are in this model, continue
+        if len(matching_idxs)==0:
+            continue
+        # convert hyperparams of these samples accordingly to get the underlying betas
+        converted_betas = detectable_samples[matching_idxs,len(hyperparams):] * detectable_convfacs
+        converted_betas /= converted_betas.sum(axis=1, keepdims=True)
+        detectable_samples[matching_idxs,len(hyperparams):] = converted_betas
+
+        # also save converted relative fractions to model0
+        if smdl==true_model:
+            converted_rel_fracs = detectable_convfacs * \
+                    np.asarray(list(branching_fractions.values()))
+            converted_rel_fracs /= np.sum(converted_rel_fracs)
+            for cidx, channel in enumerate(channels):
+                model0[channel].rel_frac_detectable(converted_rel_fracs[cidx])
+
+    return detectable_samples, model0

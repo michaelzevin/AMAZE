@@ -193,6 +193,12 @@ class KDEModel(Model):
         """
         self.rel_frac = beta
 
+    def rel_frac_detectable(self, beta_det):
+        """
+        Stores the relative detectable fraction of samples that are drawn from this KDE model
+        """
+        self.rel_frac_detectable = beta_det
+
     def Nobs_from_beta(self, Nobs):
         """
         Stores the branching fraction of the underlying population

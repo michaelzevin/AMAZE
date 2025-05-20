@@ -260,24 +260,28 @@ def amaze(ini_file):
                 plot_obs=True, \
                 plot_obs_samples=False, \
                 verbose=verbose)
-    pdb.set_trace()
 
 
     # --- Do the sampling!
-    #Here we pass different args is we are doing discrete or continuous sampling of the population model parameters
-    if continuous_sample==False:
-        hyperparam_bounds = [[0, len(hyperparam_dict[i])] for i in range(Nhyper)]
-        sampler = sample.Sampler(model_names, hyperparam_bounds=hyperparam_bounds, likelihood='emcee_lnlike_disc')
-    else:
-        sampler = sample.Sampler(model_names)
-    sampler.sample(pop_models, obsdata, use_flows, smallest_N, continuous_sample, prior_pdf=p_theta, verbose=verbose)
+    # Initialize sampler class
+    sampler = sample.Sampler(model_names=model_names, \
+                                pop_param_dict = settings['population-parameter-dict'], \
+                                use_flows = settings['use-flows'], \
+                                continuous_sampling = settings['continuous-sampling'])
+
+    sampler.sample(models=pop_models, \
+                    obsdata = obs_samples, \
+                    prior_pdf = p_theta, \
+                    smallest_N = settings['n-regularization'], \
+                    verbose=verbose)
+
     samples = sampler.samples
     raw_samples = samples.copy()
     lnprb = sampler.lnprb
     submodels_dict = sampler.submodels_dict
 
     # take the floor of the hyperparameters to get the model indices for discrete sampling
-    if continuous_sample==False:
+    if settings['continuous-sampling']==False:
         for hyper_idx in list(submodels_dict.keys()):
             samples[:,:,hyper_idx] = np.floor(samples[:,:,hyper_idx]).astype(int)
 
@@ -288,43 +292,21 @@ def amaze(ini_file):
     raw_samples = raw_samples.reshape((raw_samples.shape[0] * raw_samples.shape[1], raw_samples.shape[2]))
     lnprb = lnprb.reshape((lnprb.shape[0] * lnprb.shape[1]))
 
-    # Get samples for both *detectable* branching fractions and *underlying* branching fractions -- for KDEs only
-    #requires addition to do this for flows
-    if use_flows==False:
+
+    # Get detectable branching fractions as well as underlying
+    # FIXME: Can we get this working for flows? I know it requires additions.
+    if settings['use-flows']==False:
         if verbose:
             print("Converting underlying betas from sampler to detectable betas...\n")
-        detectable_samples = samples.copy()
-        smdls = list(set([x.split('/',1)[1] for x in model_names]))
-        # get the conversion factors between the detectable and underlying distributions
-        for smdl in sorted(smdls):
-            detectable_convfacs = []
-            for channel in channels:
-                detectable_convfacs.append(getFromDict(kde_models, [channel]+smdl.split('/')).alpha)
-            detectable_convfacs = np.asarray(detectable_convfacs)
-            # loop over hyperparams to get samples in this submodel
-            hyperparams = smdl.split('/')
-            for idx, param in enumerate(hyperparams):
-                hyper_idx = list(submodels_dict[idx].keys())[list(submodels_dict[idx].values()).index(param)]
-                if idx==0:
-                    matching_idxs = np.where(samples[:,idx] == hyper_idx)[0]
-                    matching_samps = samples[matching_idxs]
-                else:
-                    matching_idxs = matching_idxs[np.where(matching_samps[:,idx] == hyper_idx)[0]]
-                    matching_samps = samples[matching_idxs]
-            # if no samples are in this model, continue
-            if len(matching_idxs)==0:
-                continue
-            # convert hyperparams of these samples accordingly to get the underlying betas
-            converted_betas = detectable_samples[matching_idxs,len(hyperparams):] * detectable_convfacs
-            converted_betas /= converted_betas.sum(axis=1, keepdims=True)
-            detectable_samples[matching_idxs,len(hyperparams):] = converted_betas
-
-            # save converted relative fractions to model0
-            if smdl==args.model0:
-                converted_rel_fracs = betas * detectable_convfacs
-                converted_rel_fracs /= np.sum(converted_rel_fracs)
-                for cidx, channel in enumerate(channels):
-                    model0[channel].rel_frac_detectable(converted_rel_fracs[cidx])
+        detectable_samples, model0 = helper_functions.DetectableBranchingFractions(\
+                        samples=samples, \
+                        model_names=model_names, \
+                        models=pop_models, \
+                        submodels_dict=submodels_dict, \
+                        branching_fractions = settings['branching-fractions'], \
+                        model0=model0, \
+                        true_model=true_model)
+    pdb.set_trace()
 
     # --- Print summary info about the sampling
     if verbose:
