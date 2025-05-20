@@ -217,9 +217,9 @@ def plot_1D_kdemodels(model_names, true_model, models, model0, \
         plt.suptitle("Sampled model: {0:s}".format(model0_name), fontsize=50, y=0.99)
 
         if dirname:
-            fname = os.path.join(dirname, 'marginalized_kdes_fixed_{:s}.png'.format(fixed_name))
+            fname = os.path.join(dirname, 'marginalized_kdes_varied_{:s}.png'.format(varied_name))
         else:
-            fname = './marginalized_kdes_fixed_{:s}.png'.format(fixed_name)
+            fname = './marginalized_kdes_varied_{:s}.png'.format(varied_name)
 
         plt.tight_layout()
         plt.savefig(fname)
