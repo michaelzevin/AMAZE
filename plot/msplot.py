@@ -8,6 +8,7 @@ import os
 import pdb
 from tqdm import tqdm
 import warnings
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -148,7 +149,7 @@ def plot_1D_kdemodels(model_names, true_model, models, model0, \
 
         # Plot model0, obsdata, and formatting
         if verbose:
-            print('    plotting model0 and observations...')
+            print('     plotting model0 and observations...')
         for idx in np.arange(Nsbmdls):
             for pidx, param in enumerate(params):
                 if axs.ndim == 1:
@@ -228,119 +229,120 @@ def plot_1D_kdemodels(model_names, true_model, models, model0, \
 
 
 
-def plot_samples(samples, submodels_dict, model_names, channels, model0, name=None, hyper_idx=0, detectable_beta=False):
+def plot_samples(samples, pop_param_dict, submodels_dict, channels_dict, \
+                 model0, detectable_beta=False, dirname=None, verbose=False):
     """
     Plots the models that the chains are exploring, and histograms of the 
     branching fraction recovered for each model.
 
-    :hyper_marg_idx: defines the index of the hyperparaeter in submodels_dict
+    :hyper_idx: defines the index of the hyperparaeter in submodels_dict
     you wish to plot, marginalizing over the other parameters
     """
 
-    Nhyper = len(submodels_dict)
+    Nhyper = len(pop_param_dict.keys())
+    channels = list(channels_dict.keys())
+    beta_string = 'detectable' if detectable_beta==True else 'underlying'
 
-    # setup the plots
-    fig = plt.figure(figsize=(12,7))
-    gs = gridspec.GridSpec(len(channels), 3, wspace=0.2, hspace=0.2)
-    ax_chains, ax_margs = [], []
-    for cidx, channel in enumerate(channels):
-        ax_chains.append(fig.add_subplot(gs[cidx, :2]))
-        ax_margs.append(fig.add_subplot(gs[cidx, -1]))
-
-    # plot the chains moving in beta space, colored by their model
-    for chain in samples:
-        for midx, model in submodels_dict[hyper_idx].items():
-            smdl_locs = np.argwhere(chain[:,hyper_idx]==midx)[:,0]
-            steps = np.arange(chain.shape[0])
-            for cidx, channel in enumerate(channels):
-                ax_chains[cidx].scatter(steps[smdl_locs], \
-                    chain[smdl_locs,cidx+Nhyper], color=cp[midx], s=0.5, alpha=0.2)
-
-    # plot the histograms on beta for each model
-    # compactify all the chains in samples
-    samples_allchains = np.reshape(samples, (samples.shape[0]*samples.shape[1], samples.shape[2]))
-    basemdl_samps = len(np.argwhere(samples_allchains[:,hyper_idx]==0).flatten())
-    h_max = 0
-    for midx, model in submodels_dict[hyper_idx].items():
-        smdl_locs = np.argwhere(samples_allchains[:,hyper_idx]==midx).flatten()
-        mdl_samps = len(smdl_locs)
-        if basemdl_samps > 0:
-            BF = float(mdl_samps)/basemdl_samps
-        else:
-            BF = float(mdl_samps)
+    # loop for all hyperparameters
+    for hidx, hyperp in enumerate(list(pop_param_dict.keys())):
+        if verbose:
+            print('  plotting {:s} samples for {:s}...'.format(beta_string, hyperp))
+        # setup the plots
+        fig = plt.figure(figsize=(12,7))
+        gs = gridspec.GridSpec(len(channels), 3, wspace=0.2, hspace=0.2)
+        ax_chains, ax_margs = [], []
         for cidx, channel in enumerate(channels):
-            h, bins, _ = ax_margs[cidx].hist(samples_allchains[smdl_locs, cidx+Nhyper], \
-                orientation='horizontal', histtype='step', color=cp[midx], bins=50, \
-                alpha=0.7, label=model+', BF={0:0.1e}'.format(BF))
-            h_max = h.max() if h.max() > h_max else h_max
+            ax_chains.append(fig.add_subplot(gs[cidx, :2]))
+            ax_margs.append(fig.add_subplot(gs[cidx, -1]))
 
+        # plot the chains moving in beta space, colored by their model
+        for chain in samples:
+            for midx, model in submodels_dict[hidx].items():
+                smdl_locs = np.argwhere(chain[:,hidx]==midx)[:,0]
+                steps = np.arange(chain.shape[0])
+                for cidx, channel in enumerate(channels):
+                    ax_chains[cidx].scatter(steps[smdl_locs], \
+                        chain[smdl_locs,cidx+Nhyper], color=cp[midx], s=0.5, alpha=0.2)
 
-    # format plot
-    for cidx, (channel, ax_chain, ax_marg) in enumerate(zip(channels, \
-                                                ax_chains, ax_margs)):
-
-        # plot the injected value
-        if model0:
-            if detectable_beta==True:
-                ax_chain.axhline(model0[channel].rel_frac_detectable, color='k', \
-                        linestyle='--', alpha=0.7)
-                ax_marg.axhline(model0[channel].rel_frac_detectable, color='k', \
-                        linestyle='--', alpha=0.7)
+        # plot the histograms on beta for each model
+        #   compactify all the chains in samples
+        samples_allchains = np.reshape(samples, (samples.shape[0]*samples.shape[1], samples.shape[2]))
+        basemdl_samps = len(np.argwhere(samples_allchains[:,hidx]==0).flatten())
+        h_max = 0
+        for midx, model in submodels_dict[hidx].items():
+            smdl_locs = np.argwhere(samples_allchains[:,hidx]==midx).flatten()
+            mdl_samps = len(smdl_locs)
+            if basemdl_samps > 0:
+                BF = float(mdl_samps)/basemdl_samps
             else:
-                ax_chain.axhline(model0[channel].rel_frac, color='k', \
-                        linestyle='--', alpha=0.7)
-                ax_marg.axhline(model0[channel].rel_frac, color='k', \
-                        linestyle='--', alpha=0.7)
-
-        # tick labels
-        if cidx != len(channels)-1:
-            ax_chain.set_xticklabels([])
-            ax_marg.set_xticklabels([])
-        ax_chain.set_yticks([0,0.5,1.0])
-        ax_marg.set_yticklabels([])
-        ax_chain.tick_params(axis='both', labelsize=20)
-        ax_marg.tick_params(axis='both', labelsize=20)
-
-        # legend
-        if cidx == 0:
-            ax_marg.legend(loc='center', bbox_to_anchor=[1.0,1.0], prop={'size':10})
-
-        if cidx == len(channels)-1:
-            ax_chain.set_xlabel('Step', fontsize=30)
-            ax_marg.set_xlabel(r"p($\beta$)", fontsize=30)
-
-        ax_chain.set_ylabel(r"$\beta_{%s}$" % format(channel), fontsize=30)
-        ax_chain.set_xlim(0,samples.shape[1])
-        ax_chain.set_ylim(0,1)
-        ax_marg.set_xlim(0,h_max+10)
-        ax_marg.set_ylim(0,1)
+                BF = float(mdl_samps)
+            for cidx, channel in enumerate(channels):
+                h, bins, _ = ax_margs[cidx].hist(samples_allchains[smdl_locs, cidx+Nhyper], \
+                    orientation='horizontal', histtype='step', color=cp[midx], bins=50, \
+                    alpha=0.7, label=model+', BF={0:0.1e}'.format(BF))
+                h_max = h.max() if h.max() > h_max else h_max
 
 
-    # title
-    if model0:
-        # find the deepest model
-        channel_depth = 0
-        for channel in channels:
-            if len(model0[channel].label.split('/')) > channel_depth:
-                channel_depth = len(model0[channel].label.split('/'))
-                deepest_channel = channel
-        model0_name = model0[deepest_channel].label.split('/', 1)[1]
-    else:
-        model0_name='GW observations'
-    plt.suptitle("True model: {0:s}".format(model0_name), fontsize=40)
-    fname = 'samples'
-    if detectable_beta==True:
-        fname = 'samples_detectable'
-    elif detectable_beta==False:
-        fname = 'samples_underlying'
-    if name:
-        fname = fname+'_hyperidx'+str(hyper_idx)+'_'+name+'.png'
-    else:
-        fname = fname+'_hyperidx'+str(hyper_idx)+'.png'
-    plt.subplots_adjust(bottom=0.15)
-    plt.savefig(fname)
-    plt.close()
+        # format plot
+        for cidx, (channel, ax_chain, ax_marg) in enumerate(zip(channels, \
+                                                    ax_chains, ax_margs)):
+
+            # plot the injected value
+            if model0:
+                if detectable_beta==True:
+                    ax_chain.axhline(model0[channel].rel_frac_detectable, color='k', \
+                            linestyle='--', alpha=0.7)
+                    ax_marg.axhline(model0[channel].rel_frac_detectable, color='k', \
+                            linestyle='--', alpha=0.7)
+                else:
+                    ax_chain.axhline(model0[channel].rel_frac, color='k', \
+                            linestyle='--', alpha=0.7)
+                    ax_marg.axhline(model0[channel].rel_frac, color='k', \
+                            linestyle='--', alpha=0.7)
+
+            # tick labels
+            if cidx != len(channels)-1:
+                ax_chain.set_xticklabels([])
+                ax_marg.set_xticklabels([])
+            ax_chain.set_yticks([0,0.5,1.0])
+            ax_marg.set_yticklabels([])
+            ax_chain.tick_params(axis='both', labelsize=20)
+            ax_marg.tick_params(axis='both', labelsize=20)
+
+            # legend
+            if cidx == 0:
+                ax_marg.legend(loc='center', bbox_to_anchor=[1.0,1.0], prop={'size':10})
+
+            if cidx == len(channels)-1:
+                ax_chain.set_xlabel('Step', fontsize=30)
+                ax_marg.set_xlabel(r"p($\beta$)", fontsize=30)
+
+            ax_chain.set_ylabel(r"$\beta_{%s}$" % format(channel), fontsize=30)
+            ax_chain.set_xlim(0,samples.shape[1])
+            ax_chain.set_ylim(0,1)
+            ax_marg.set_xlim(0,h_max+10)
+            ax_marg.set_ylim(0,1)
 
 
+        # title
+        if model0:
+            # find the deepest model
+            channel_depth = 0
+            for channel in channels:
+                if len(model0[channel].label.split('/')) > channel_depth:
+                    channel_depth = len(model0[channel].label.split('/'))
+                    deepest_channel = channel
+            model0_name = model0[deepest_channel].label.split('/', 1)[1]
+        else:
+            model0_name='GW observations'
+        plt.suptitle("True model: {0:s}".format(model0_name), fontsize=40)
 
+        fname = 'samples_detectable' if detectable_beta==True else 'samples_underlying'
+        if dirname:
+            savepath = os.path.join(dirname, fname+'_{:s}.png'.format(hyperp))
+        else:
+            savepath = './'+fname+'_{:s}.png'.format(hyperp)
 
+        plt.subplots_adjust(bottom=0.15)
+        plt.savefig(savepath)
+        plt.close()
