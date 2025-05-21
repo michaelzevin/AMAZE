@@ -14,7 +14,6 @@ __contributors__ = [
 # --- Import packages --- #
 import sys
 import os
-import h5py
 import warnings
 import multiprocessing
 import pdb
@@ -132,6 +131,7 @@ def amaze(ini_file):
     # Calls observations.py to generate samples if argument is passed
     # NOTE: model0 denotes the 'true' model data if not using actual observations
     if not settings['true-model']:
+        true_model=None
         model0=None
         obs, obs_samples, p_theta, events = observations.read_observations(\
                     params=settings['event-parameter-dict'].keys(), \
@@ -144,6 +144,7 @@ def amaze(ini_file):
     else:
         if verbose:
             print("Drawing {0:d} observations from 'true' model, assuming that the branching fractions represent the underlying distribution, and using the '{1:s}' method for mock measurement uncertainty...".format(settings['n-observations'], settings['mock-uncertainty']))
+        events = None
         rand_vars = np.random.random(size=settings['n-observations'])
         randlow_hold = 0
         for idx, channel in enumerate(model0):
@@ -255,7 +256,7 @@ def amaze(ini_file):
                 observations=obs, \
                 samples=obs_samples, \
                 dirname=settings['output-dir'], \
-                fixed_parameters=None, \
+                fixed_parameters=settings['marg-kde-fixed-params'], \
                 plot_obs=True, \
                 plot_obs_samples=False, \
                 verbose=verbose)
@@ -266,7 +267,10 @@ def amaze(ini_file):
     sampler = sample.Sampler(model_names=model_names, \
                                 pop_param_dict = settings['population-parameter-dict'], \
                                 use_flows = settings['use-flows'], \
-                                continuous_sampling = settings['continuous-sampling'])
+                                continuous_sampling = settings['continuous-sampling'], \
+                                nwalkers=settings['n-walkers'], \
+                                nsteps=settings['n-steps'], \
+                                fburnin=settings['f-burnin'])
 
     sampler.sample(models=pop_models, \
                     obsdata = obs_samples, \
@@ -303,6 +307,7 @@ def amaze(ini_file):
                         model_names=model_names, \
                         models=pop_models, \
                         submodels_dict=submodels_dict, \
+                        channels_dict=settings['channels-dict'], \
                         branching_fractions = settings['branching-fractions'], \
                         model0=model0, \
                         true_model=true_model)
@@ -344,84 +349,24 @@ def amaze(ini_file):
                         detectable_beta=True, \
                         dirname=settings['output-dir'], \
                         verbose=verbose)
-    pdb.set_trace()
 
 
     # --- Save samples
     if verbose:
         print('\nSaving samples and wrapping up!')
 
-    if args.name:
-        fname = "output_" + args.name + ".hdf5"
-    else:
-        fname = "output.hdf5"
+    helper_functions.SaveToDisk(\
+                    settings=settings, \
+                    model0=model0, \
+                    submodels_dict=submodels_dict, \
+                    obsdata=obs_samples, \
+                    samples=samples, \
+                    probs=lnprb, \
+                    events=events, \
+                    detectable_samples=detectable_samples)
 
     if verbose:
-        print("Saving information to '{0:s}'...\n".format(fname))
-
-    hfile = h5py.File(fname, "w")
-    bsgrp = hfile.create_group("model_selection")
-
-    # add model0 attribute
-    if args.model0=='gwobs':
-        info = np.append([str(args.model0)], [*events])
-    else:
-        info = np.append([str(args.model0)], \
-            [*[key+': '+str(model0[key].rel_frac) for key in model0.keys()]])
-    info = [x.encode('utf-8') for x in info]
-    bsgrp.attrs["model0_params"] = info
-
-    # add argument attribute
-    arguments = []
-    for key, val in vars(args).items():
-        arguments.append('{}: {}'.format(key,val))
-    bsgrp.attrs["args"] = arguments
-
-    # add submodels_dict attribute
-    for hyper_idx in submodels_dict.keys():
-        conversion = []
-        for key, val in submodels_dict[hyper_idx].items():
-            conversion.append(str(key)+': '+str(val))
-        bsgrp.attrs["p"+str(hyper_idx)+'_dict'] = conversion
-    hfile.close()
-
-    # save observations as dataframe
-    df = pd.DataFrame()
-    saved_obs_idxs = np.repeat(np.arange(obsdata.shape[0]), obsdata.shape[1])
-    saved_obs = np.reshape(obsdata, (-1,len(params)))
-    df = pd.DataFrame(saved_obs, columns=params, index=saved_obs_idxs)
-    df.to_hdf(fname, key='model_selection/obsdata')
-
-    # save samples as dataframe
-    columns = []
-    convert_dict = {}
-    for hyper_idx in submodels_dict.keys():
-        columns.append('p'+str(hyper_idx))
-        # save column names to convert model indices to ints
-        convert_dict['p'+str(hyper_idx)] = float
-    for channel in channels:
-        columns.append('beta_'+channel)
-    df = pd.DataFrame(samples, columns=columns).astype(convert_dict)
-    df.to_hdf(fname, key='model_selection/samples')
-    df = pd.DataFrame(raw_samples, columns=columns).astype(convert_dict)
-    df.to_hdf(fname, key='model_selection/raw_samples')
-
-    # save detectable samples as dataframe
-    columns = []
-    convert_dict = {}
-    for hyper_idx in submodels_dict.keys():
-        columns.append('p'+str(hyper_idx))
-        # save column names to convert model indices to ints
-        convert_dict['p'+str(hyper_idx)] = float
-    for channel in channels:
-        columns.append('beta_'+channel)
-    #df = pd.DataFrame(detectable_samples, columns=columns).astype(convert_dict)
-    df.to_hdf(fname, key='model_selection/detectable_samples')
-
-    # save sample probabilities as dataframe
-    df = pd.DataFrame(lnprb, columns=['lnprb'])
-    df.to_hdf(fname, key='model_selection/lnprb')
-
+        print("\nFinished!")
 
 # Run main AMAZE function
 if __name__ == "__main__":

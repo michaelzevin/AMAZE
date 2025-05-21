@@ -2,9 +2,11 @@ import configparser
 import ast
 import warnings
 import os
+import h5py
 
 import numpy as np
 np.set_printoptions(legacy='1.25') #so datatypes aren't printed
+import pandas as pd
 from copy import deepcopy
 
 from functools import reduce
@@ -13,7 +15,7 @@ import operator
 __all__ = ['GetFromDict','SetInDict','ParseIniFile',\
             'ErrorCheckIni','ErrorCheckModels',\
             'GetDeepestModels','DetectableBranchingFractions',\
-            'PrintSummaryStatistics']
+            'PrintSummaryStatistics','SaveToDisk']
 
 # --- Useful functions for accessing items in KDE dictionary
 def GetFromDict(dataDict, mapList):
@@ -59,11 +61,13 @@ def ParseIniFile(file_path):
     RealObservations = config_dict.get('RealObservations')
     MockObservations = config_dict.get('MockObservations')
     Flows = config_dict.get('Flows')
+    Sampler = config_dict.get('Sampler')
     ExtraOptions = config_dict.get('ExtraOptions')
 
     # save all options in arguments dictionary
     settings = {}
-    for section in [MainSettings,RealObservations,MockObservations,Flows,ExtraOptions]:
+    for section in [MainSettings,RealObservations,MockObservations,\
+                        Flows,Sampler,ExtraOptions]:
         for key, value in section.items():
             settings[key] = value
 
@@ -220,12 +224,12 @@ def GetDeepestModels(model_names, models, hyperparam_dict, use_flows=False):
         all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
     return model_names, models
 
-def DetectableBranchingFractions(samples, model_names, models, submodels_dict, branching_fractions, model0, true_model):
+def DetectableBranchingFractions(samples, model_names, models, submodels_dict, channels_dict, branching_fractions, model0, true_model):
     """
     Calculates detectable branching fractions after the inference is run
     Currently only supported for discrete inference
     """
-    channels = list(branching_fractions.keys())
+    channels = list(channels_dict.keys())
     detectable_samples = samples.copy()
     smdls = list(set([x.split('/',1)[1] for x in model_names]))
     # get the conversion factors between the detectable and underlying distributions
@@ -319,3 +323,84 @@ def PrintSummaryStatistics(samples, samples_det, model_names, \
         if samples_det is not None:
             print("    detectable betas={}".format(list(sample_betas_detectable.items())))
     print("")
+
+def SaveToDisk(settings, model0, submodels_dict, obsdata, \
+               samples, probs, events=None, detectable_samples=None):
+    """
+    Saves all relevant information to disk as hdf5 file
+    """
+    if settings['output-dir'] is not None:
+        fpath = os.path.join(os.getcwd(), settings['output-dir'], 'amaze_output.hdf5')
+    else:
+        fpath = os.path.join(os.getcwd(), 'amaze_output.hdf5')
+
+    if settings['verbose']:
+        print("  writing to disk at {:s}...".format(fpath))
+
+    params = list(settings['event-parameter-dict'].keys())
+    channels = list(settings['channels-dict'].keys())
+
+    # set up h5 file
+    hfile = h5py.File(fpath, "w")
+    bsgrp = hfile.create_group("model_selection")
+
+    # save aspects of the true model
+    if settings['true-model'] is not None:
+        info = np.append([*[k+': '+v for k,v in settings['true-model'].items()]], \
+                [*[key+': '+str(model0[key].rel_frac) for key in model0.keys()]])
+    else:
+        info = np.append(["Real Observations: "], [*events])
+    info = [x.encode('utf-8') for x in info]
+    bsgrp.attrs["true-model-params"] = info
+
+    # save strings of the arguments in the config file
+    arguments = []
+    for key, val in settings.items():
+        arguments.append('{}: {}'.format(key,val))
+    bsgrp.attrs["config"] = arguments
+
+    # add submodels_dict attribute
+    for hyper_idx in submodels_dict.keys():
+        conversion = []
+        for key, val in submodels_dict[hyper_idx].items():
+            conversion.append(str(key)+': '+str(val))
+        bsgrp.attrs["p"+str(hyper_idx)+'_conversion_dict'] = conversion
+    hfile.close()
+    
+    # save observations as dataframe
+    df = pd.DataFrame()
+    saved_obs_idxs = np.repeat(np.arange(obsdata.shape[0]), obsdata.shape[1])
+    saved_obs = np.reshape(obsdata, (-1,len(params)))
+    df = pd.DataFrame(saved_obs, columns=params, index=saved_obs_idxs)
+    df.to_hdf(fpath, key='model_selection/obsdata')
+
+    # save samples as dataframe
+    columns = []
+    convert_dict = {}
+    for hyper_idx in submodels_dict.keys():
+        columns.append('p'+str(hyper_idx))
+        # save column names to convert model indices to ints
+        convert_dict['p'+str(hyper_idx)] = float
+    for channel in channels:
+        columns.append('beta_'+channel)
+    df = pd.DataFrame(samples, columns=columns).astype(convert_dict)
+    df.to_hdf(fpath, key='model_selection/samples')
+
+    # save detectable samples as dataframe, if they're calculated
+    if detectable_samples is not None:
+        columns = []
+        convert_dict = {}
+        for hyper_idx in submodels_dict.keys():
+            columns.append('p'+str(hyper_idx))
+            # save column names to convert model indices to ints
+            convert_dict['p'+str(hyper_idx)] = float
+        for channel in channels:
+            columns.append('beta_'+channel)
+        df = pd.DataFrame(detectable_samples, columns=columns).astype(convert_dict)
+        df.to_hdf(fpath, key='model_selection/detectable_samples')
+
+    # save sample probabilities as dataframe
+    df = pd.DataFrame(probs, columns=['lnprb'])
+    df.to_hdf(fpath, key='model_selection/lnprb')
+
+    return

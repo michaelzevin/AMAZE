@@ -37,10 +37,13 @@ def plot_1D_kdemodels(model_names, true_model, models, model0, \
     """
     Plots all the KDEs for each channel in each model, as well as the *true* model described by the input branching fraction.
     """
-    # warn about fixed parameters if model0 is specified...
-    if model0 and fixed_parameters:
+    # warn about fixed parameters if model0 is specified and make sure we have fixed parameters...
+    if model0 is not None and fixed_parameters is not None:
         warnings.warn("Since you are assuming a true mock model, fixed parameters will be set to the true values of the mock model.", stacklevel=2)
+    if model0 is not None:
         fixed_parameters = true_model
+    if model0 is None and fixed_parameters is None:
+        raise ValueError("If model0 is not specified, you need to pass fixed parameters into this plotting code to generate the marginalized KDEs.")
 
     # plot for each fixed hyperparameter
     channels = list(models.keys())
@@ -116,7 +119,7 @@ def plot_1D_kdemodels(model_names, true_model, models, model0, \
                             label = channel+r" ($\beta$={0:0.2f})".format(model0[channel].rel_frac)
                         else:
                             label = None
-                    elif idx==0 and pidx==Nparams-1 and cidx==Nchannels-1:
+                    elif idx==0 and pidx==Nparams-1:
                         label = channel 
                     else:
                         label = None
@@ -218,9 +221,9 @@ def plot_1D_kdemodels(model_names, true_model, models, model0, \
         plt.suptitle("Sampled model: {0:s}".format(model0_name), fontsize=50, y=0.99)
 
         if dirname:
-            fname = os.path.join(dirname, 'marginalized_kdes_varied_{:s}.png'.format(varied_name))
+            fname = os.path.join(os.getcwd(), dirname, 'marginalized_kdes_varied_{:s}.png'.format(varied_name))
         else:
-            fname = './marginalized_kdes_varied_{:s}.png'.format(varied_name)
+            fname = os.path.join(os.getcwd(), 'marginalized_kdes_varied_{:s}.png'.format(varied_name))
 
         plt.tight_layout()
         plt.savefig(fname)
@@ -315,9 +318,11 @@ def plot_samples(samples, pop_param_dict, submodels_dict, channels_dict, \
 
             if cidx == len(channels)-1:
                 ax_chain.set_xlabel('Step', fontsize=30)
-                ax_marg.set_xlabel(r"p($\beta$)", fontsize=30)
+                lbl = "p($\\beta^\\mathrm{det}$)" if detectable_beta==True else "p($\\beta$)"
+                ax_marg.set_xlabel(lbl, fontsize=30)
 
-            ax_chain.set_ylabel(r"$\beta_{%s}$" % format(channel), fontsize=30)
+            lbl = "$\\beta^\\mathrm{det}_{%s}$" % format(channel) if detectable_beta==True else "$\\beta_{%s}$" % format(channel)
+            ax_chain.set_ylabel(lbl, fontsize=30)
             ax_chain.set_xlim(0,samples.shape[1])
             ax_chain.set_ylim(0,1)
             ax_marg.set_xlim(0,h_max+10)
@@ -334,14 +339,14 @@ def plot_samples(samples, pop_param_dict, submodels_dict, channels_dict, \
                     deepest_channel = channel
             model0_name = model0[deepest_channel].label.split('/', 1)[1]
         else:
-            model0_name='GW observations'
-        plt.suptitle("True model: {0:s}".format(model0_name), fontsize=40)
+            model0_name='Observations'
+        plt.suptitle("True Model: {0:s}".format(model0_name), fontsize=40)
 
         fname = 'samples_detectable' if detectable_beta==True else 'samples_underlying'
         if dirname:
-            savepath = os.path.join(dirname, fname+'_{:s}.png'.format(hyperp))
+            savepath = os.path.join(os.getcwd(), dirname, fname+'_{:s}.png'.format(hyperp))
         else:
-            savepath = './'+fname+'_{:s}.png'.format(hyperp)
+            savepath = os.path.join(os.getcwd(), fname+'_{:s}.png'.format(hyperp))
 
         plt.subplots_adjust(bottom=0.15)
         plt.savefig(savepath)
