@@ -1,0 +1,373 @@
+#!/usr/bin/env python
+
+#############################
+### AMAZE MODEL SELECTION ###
+#############################
+
+__author__ = "Michael Zevin <michael.j.zevin@gmail.com>"
+__contributors__ = [
+    "Storm Colloms <>",
+    "Chris Pankow <>",
+    "April Cheng <>"
+]
+
+# --- Import packages --- #
+import sys
+import os
+import warnings
+import multiprocessing
+import pdb
+
+import numpy as np
+import pandas as pd
+
+from populations import models, observations
+from sample import sample
+from plot import msplot
+import utils.helper_functions as helper_functions
+
+
+def amaze(ini_file):
+    # --- Read in the parsed ini file
+    settings = helper_functions.ParseIniFile(ini_file)
+
+    # --- Error check the ini file
+    helper_functions.ErrorCheckIni(settings)
+
+    # --- Create directory for plots and output samples
+    os.makedirs(settings['output-dir'], exist_ok=True)
+
+    # --- Set random seed
+    if settings['random-seed']:
+        np.random.seed(settings['random-seed'])
+
+    # --- Set verbosity
+    verbose = settings['verbose']
+
+    # --- Load in population models into dictionary structure: models[channel] 
+    #     for flows and models[channel][model] for KDEs
+    if verbose:
+        print("\nReading models, applying transformations, and initializing density estimates for astrophysical populations...\n")
+
+    # for specific case of mock observations with SNR-based uncertainties, need to read optimal SNRs
+    store_optimal_snrs = settings['true-model'] is not None and settings['mock-uncertainty']=='snr'
+    model_names, pop_models = models.get_models(\
+                file_path = settings['path-to-populations'], \
+                channel_dict = settings['channels-dict'], \
+                param_dict = settings['event-parameter-dict'], \
+                hyperparam_dict = settings['population-parameter-dict'], \
+                use_flows = settings['use-flows'], \
+                flow_path=settings['flow-model-path'], \
+                sensitivity=settings['sensitivity-key'], \
+                spinmag=settings['spin-mag-distribution'], \
+                max_samps=settings['kde-max-samples'], \
+                kde_bandwidth=settings['kde-bandwidth'], \
+                store_optimal_snrs=store_optimal_snrs)
+
+    #grab model hyperparameters from model input file
+    model_names.sort()
+    hyperparams = sorted(list(set([x.split('/', 1)[1] for x in model_names])))
+    Nhyper = np.max([len(x.split('/')) for x in hyperparams])
+
+    # sort channels in alphabetical order
+    channels = sorted(list(pop_models.keys()))
+
+    # create dict for the hyperparameters at each level
+    hyperparam_dict  = {}
+    hyperidx=0
+    while hyperidx < Nhyper:
+        hyperidx_with_Nhyper = np.argwhere(np.asarray([len(x.split('/')) for x in hyperparams])>hyperidx).flatten()
+        hyperparams_at_level = sorted(set([x.split('/')[hyperidx] for x in np.asarray(hyperparams)[hyperidx_with_Nhyper]]))
+        hyperparam_dict[hyperidx] = hyperparams_at_level
+        hyperidx += 1
+
+    if verbose:
+        print("\nFormation channels: [" + ", ".join(channels)+"]\n")
+        print("Astrophysical models: [" + ", ".join(model_names)+"]\n")
+        print("Parameters for inference: [" + ", ".join(settings['population-parameter-dict'])+"]\n\n")
+
+    # --- Perform some checks to make sure everything is compatible
+    helper_functions.ErrorCheckModels(model_names, channels, \
+                    Nhyper, settings['true-model'])
+
+    # --- If model0 specified, store KDE models in `model0` dict and save relative fractions
+    if settings['true-model'] is not None:
+        if verbose:
+            print("Saving relative fractions and storing true model...\n")
+
+        # format true model from config appropriately
+        true_model = "/".join(settings['true-model'].values())
+
+        # since channels are sorted alphabetically, branching fractions are defined in the same order
+        model0 = {}
+        for idx, channel in enumerate(channels):
+            channel_mdls = [x for x in model_names if channel+'/' in x]
+            for model in channel_mdls:
+                smdl = model.split('/',1)[1]
+                # print info about model0
+                if (smdl in true_model):
+                    model0[channel] = \
+                    helper_functions.GetFromDict(pop_models, model.split('/'))
+
+        # set branching fractions as attributes in KDEModels
+        for channel in channels:
+            model0[channel].rel_frac(settings['branching-fractions'][channel])
+
+        # print model0 info
+        if verbose:
+            print("'{0:s}' set as true model".format(true_model))
+            print("  model ranges:")
+            for channel, mdl in model0.items():
+                print("    {0:s} (beta={1:0.2f})".format(channel, mdl.rel_frac))
+                for param in settings['event-parameter-dict'].keys():
+                    print("      {0:s}: [{1:0.3f},{2:0.3f}]".format(param,\
+                            mdl.sample_range[param][0], mdl.sample_range[param][1]))
+
+
+    # --- Generate observations (shape: [observations, samples, params])
+    if verbose:
+        print("\n\nGenerating observations...\n")
+
+    # Calls observations.py to generate samples if argument is passed
+    # NOTE: model0 denotes the 'true' model data if not using actual observations
+    if not settings['true-model']:
+        true_model=None
+        model0=None
+        obs, obs_samples, p_theta, events = observations.read_observations(\
+                    params=settings['event-parameter-dict'].keys(), \
+                    Nsamps=settings['n-samples'], \
+                    obs_path=settings['event-samples-path'], \
+                    events_to_exclude=settings['events-to-exclude'], \
+                    prior_key=settings['event-level-prior'])
+        if verbose:
+            print("Using the following {0:d} observations for inference: \n[".format(len(events)) + ", ".join(events) + "]\n")
+    else:
+        if verbose:
+            print("Drawing {0:d} observations from 'true' model, assuming that the branching fractions represent the underlying distribution, and using the '{1:s}' method for mock measurement uncertainty...".format(settings['n-observations'], settings['mock-uncertainty']))
+        events = None
+        rand_vars = np.random.random(size=settings['n-observations'])
+        randlow_hold = 0
+        for idx, channel in enumerate(model0):
+            if settings['probabilistic-draws']==True:
+                Nobs_from_channel = len(np.where((rand_vars>=randlow_hold) & \
+                        (rand_vars<(randlow_hold+model0[channel].rel_frac)))[0])
+                randlow_hold += model0[channel].rel_frac
+            else:
+                # first check that the (branching_fractions * Nobs) are integers
+                if not (settings['n-observations']*model0[channel].rel_frac).is_integer():
+                    warnings.warn("Number of observations is not divisble by detectable branching fractions provided, this may result in drawing a number of samples slighty different than what was specified!")
+                Nobs_from_channel = int(np.round(settings['n-observations'] * model0[channel].rel_frac))
+            # add attribute for number of observations drawn
+            model0[channel].Nobs_from_beta(Nobs_from_channel)
+            if idx==0:
+                obs = model0[channel].generate_observations(\
+                    Nobs=Nobs_from_channel, \
+                    verbose=verbose)
+                obs_samples = model0[channel].measurement_uncertainty(\
+                    Nsamps=settings['n-samples'], \
+                    method=settings['mock-uncertainty'], \
+                    observation_noise=True, \
+                    verbose=verbose)
+            else:
+                obs = np.concatenate((obs, \
+                    model0[channel].generate_observations(\
+                    Nobs=Nobs_from_channel, \
+                    verbose=verbose)))
+                obs_samples = np.concatenate((obs_samples, \
+                    model0[channel].measurement_uncertainty(\
+                    Nsamps=settings['n-samples'], \
+                    method=settings['mock-uncertainty'], \
+                    observation_noise=True, \
+                    verbose=verbose)))
+        # assume equal prior weight for each mock posterior sample
+        p_theta = np.ones((obs_samples.shape[0],obs_samples.shape[1]))
+
+
+    # --- Prepare population models
+    # If using Flows, train or load a previously trained model for each formation channel
+    # If using KDEs, freeze sample evaluations in each model
+    # This is time consuming, but only needs to be done once for each KDE model, 
+    #   so we don't need to recompute p_model(data) over and over again when the 
+    #   observation values aren't going to change.
+
+    if settings['use-flows']==True:
+        # MJZ: Haven't tested this yet
+        if verbose:
+            print('Training/Loading flows...\n')
+        for channel in channels:
+            if settings['train-flows'] == True:
+                if settings['use-wandb'] == True:
+                    # initialise weights and biases for flow network optimisation
+                    pop_models[channel].wandb_init(\
+                        settings['flow-settings'][channel]['epochs'])
+                else:
+                    pop_models[channel].train(\
+                        settings['flow-settings'][channel]['N-transformations'], \
+                        settings['flow-settings'][channel]['spline-bins'], \
+                        settings['flow-settings'][channel]['N-neurons'], \
+                        settings['flow-settings'][channel]['learning-rate'], \
+                        settings['flow-settings'][channel]['epochs'], \
+                        settings['n-batches'], \
+                        settings['flow-model-path'], \
+                        device=settings['device'])
+            else:
+                pop_models[channel].load_model(\
+                        settings['flow-model-path'], \
+                        device=settings['device'])
+    else:
+        if verbose:
+            print("\nFreezing sample evaluations in their respective models...")
+            if settings['multiproc-kde'] == True:
+                print("  parallelizing over {:d} cores...".format(multiprocessing.cpu_count()))
+        for model in model_names:
+            if verbose:
+                print("  {0:s}".format(model))
+            # freezing the sample evals means using the call function
+            #   this is where the prior on the posterior samples is set in
+            helper_functions.GetFromDict(pop_models, model.split('/')).freeze(\
+                    data=obs_samples, \
+                    smallest_N=settings['n-regularization'], \
+                    data_prior=p_theta, \
+                    multiproc=settings['multiproc-kde'])
+        if verbose:
+            print("Done freezing KDE evaluations of observations!\n")
+
+    # --- Copy kde_models so that they all have the same levels of hyperparameters
+    # FIXME: @Storm, is there a way to make it more clear what the flows are doing? 
+    #   Maybe a separate while loop if use-flows is true?
+    model_names, pop_models = helper_functions.GetDeepestModels(\
+            model_names=model_names, \
+            models=pop_models, \
+            hyperparam_dict=hyperparam_dict, \
+            use_flows=settings['use-flows'])
+
+    # --- Plot the KDEs and observations
+    # NOTE: fixed_parameters needs to be specified by the user if inferring from observations!
+    if settings['make-plots']==True and settings['use-flows']==False:
+        if verbose==True:
+            print("\nPlotting marginalized KDE models...\n")
+        msplot.plot_1D_kdemodels(\
+                model_names=model_names, \
+                true_model=settings['true-model'], \
+                models=pop_models, \
+                model0=model0, \
+                event_parameters=settings['event-parameter-dict'], \
+                population_parameters=settings['population-parameter-dict'], \
+                observations=obs, \
+                samples=obs_samples, \
+                dirname=settings['output-dir'], \
+                fixed_parameters=settings['marg-kde-fixed-params'], \
+                plot_obs=True, \
+                plot_obs_samples=False, \
+                verbose=verbose)
+
+
+    # --- Do the sampling!
+    # Initialize sampler class
+    sampler = sample.Sampler(model_names=model_names, \
+                                pop_param_dict = settings['population-parameter-dict'], \
+                                use_flows = settings['use-flows'], \
+                                continuous_sampling = settings['continuous-sampling'], \
+                                nwalkers=settings['n-walkers'], \
+                                nsteps=settings['n-steps'], \
+                                fburnin=settings['f-burnin'])
+
+    sampler.sample(models=pop_models, \
+                    obsdata = obs_samples, \
+                    prior_pdf = p_theta, \
+                    smallest_N = settings['n-regularization'], \
+                    verbose=verbose)
+
+    samples = sampler.samples
+    raw_samples = samples.copy()
+    lnprb = sampler.lnprb
+    submodels_dict = sampler.submodels_dict
+
+    # take the floor of the hyperparameters to get the model indices for discrete sampling
+    if settings['continuous-sampling']==False:
+        for hyper_idx in list(submodels_dict.keys()):
+            samples[:,:,hyper_idx] = np.floor(samples[:,:,hyper_idx]).astype(int)
+
+
+    # Reshape to have all steps from all walkers in a single dimension
+    original_shape = samples.shape
+    samples = samples.reshape((samples.shape[0] * samples.shape[1], samples.shape[2]))
+    raw_samples = raw_samples.reshape((raw_samples.shape[0] * raw_samples.shape[1], raw_samples.shape[2]))
+    lnprb = lnprb.reshape((lnprb.shape[0] * lnprb.shape[1]))
+
+
+    # Get detectable branching fractions as well as underlying
+    # FIXME: Can we get this working for flows? I know it requires additions.
+    detectable_samples=None
+    if settings['use-flows']==False:
+        if verbose:
+            print("Converting underlying betas from sampler to detectable betas...\n")
+        detectable_samples, model0 = helper_functions.DetectableBranchingFractions(\
+                        samples=samples, \
+                        model_names=model_names, \
+                        models=pop_models, \
+                        submodels_dict=submodels_dict, \
+                        channels_dict=settings['channels-dict'], \
+                        branching_fractions = settings['branching-fractions'], \
+                        model0=model0, \
+                        true_model=true_model)
+
+
+    # --- Print summary info about the sampling
+    if verbose:
+        print("Sample breakdown:")
+        helper_functions.PrintSummaryStatistics(\
+                    samples=samples, \
+                    samples_det=detectable_samples, \
+                    model_names=model_names, \
+                    channels_dict=settings['channels-dict'], \
+                    pop_param_dict=settings['population-parameter-dict'], \
+                    submodels_dict=submodels_dict)
+
+
+    # --- Plot samples and histograms of betas per model
+    if settings['make-plots']==True:
+        if verbose:
+            print("Plotting samples...")
+        # Need samples back in their original shape (separated by chains)
+        msplot.plot_samples(\
+                        samples=samples.reshape(original_shape), \
+                        pop_param_dict=settings['population-parameter-dict'], \
+                        submodels_dict=submodels_dict, 
+                        channels_dict=settings['channels-dict'], \
+                        model0=model0, \
+                        detectable_beta=False, \
+                        dirname=settings['output-dir'], \
+                        verbose=verbose)
+        if detectable_samples is not None:
+            msplot.plot_samples(\
+                        samples=detectable_samples.reshape(original_shape), \
+                        pop_param_dict=settings['population-parameter-dict'], \
+                        submodels_dict=submodels_dict, 
+                        channels_dict=settings['channels-dict'], \
+                        model0=model0, \
+                        detectable_beta=True, \
+                        dirname=settings['output-dir'], \
+                        verbose=verbose)
+
+
+    # --- Save samples
+    if verbose:
+        print('\nSaving samples and wrapping up!')
+
+    helper_functions.SaveToDisk(\
+                    settings=settings, \
+                    model0=model0, \
+                    submodels_dict=submodels_dict, \
+                    obsdata=obs_samples, \
+                    samples=samples, \
+                    probs=lnprb, \
+                    events=events, \
+                    detectable_samples=detectable_samples)
+
+    if verbose:
+        print("\nFinished!")
+
+# Run main AMAZE function
+if __name__ == "__main__":
+    amaze(sys.argv[1])
