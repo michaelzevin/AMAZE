@@ -18,9 +18,3 @@ Why use one channel when you can use them all? `AMAZE` performs hierarchical inf
 These additions were used to produce results in Colloms et al. 2025. The corresponding data release, including the normalising flow models, processed GW public data, and inference output, are available on Zenodo: https://zenodo.org/records/14967688. Future developments will increase the usability of `AMAZE` with normalising flows.
 
 Included in this codebase are a number of notebooks (in the `notebooks/` directory) that were used in pre-processing the data, and generate the figures and numbers from Zevin et al. 2020 (https://ui.adsabs.harvard.edu/abs/2020arXiv201110057Z/abstract). The directory `/plot/flow_results` contains the scripts used to generate the plotting scripts in Colloms et al. 2025.
-
-We include example configuration files which reproduce the results in the paper in <filepath>, when run with code version <tagged code version>. 
-This requires the inputs `path-to-populations` to point to the population models available here: https://zenodo.org/record/4277620#.X7w28RNKjUI and `event-samples-path` to point to the pre-processed GWTC-3 events, available here: https://zenodo.org/records/14967688. 
-Running AMAZE with the config file `continuous_inference.ini` will train a set of normalising flows and perform continuous inference with the newly trained flows. The trained normalising flows used in the paper may be used instead of training new flows, by pointing the `flow-model-path` input to the flow models available here: https://zenodo.org/records/14967688 and setting `train-flows` to False. 
-Running with discrete inference may also be done by setting `continuous-sampling` to False. In this case, `use-flows` can be set to False to use KDEs instead of normalising flows.
-
