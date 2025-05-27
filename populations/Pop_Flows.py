@@ -298,7 +298,7 @@ class FlowModel(Model):
 
         return samps
 
-    def __call__(self, data, conditional_hps, smallest_N, prior_pdf=None):
+    def __call__(self, data, conditional_hps, smallest_N, data_prior=None):
         """
         Calculate the regularised likelihood of the observations give some hyperparameters.
         This is used to calculate the hyperlikelihood.
@@ -313,9 +313,9 @@ class FlowModel(Model):
         smallest_N : int
             The constant by which to add a regularisation factor, in order to give an approximately constant 
             probability of 1/smallest_N in the distribution tails 
-        prior_pdf : array
+        data_prior : array
             Prior on the data of shape [Nobs x Nsample]
-            If prior_pdf is None, each observation is given equal
+            If data_prior is None, each observation is given equal
             posterior probability.
 
         Returns
@@ -328,9 +328,9 @@ class FlowModel(Model):
         likelihood = np.ones(data.shape[0]) * -np.inf
 
         #set equal prior for all samples if prior is not specified
-        prior_pdf = prior_pdf if prior_pdf is not None else np.ones((data.shape[0],data.shape[1]))
+        data_prior = data_prior if data_prior is not None else np.ones((data.shape[0],data.shape[1]))
         #raise error if any samples have prior=0
-        if np.any(prior_pdf == 0.):
+        if np.any(data_prior == 0.):
             raise Exception('One or more of the prior samples is equal to zero')
 
         #maps observations into the logistically mapped space
@@ -351,7 +351,7 @@ class FlowModel(Model):
             likelihoods_per_samp = logsumexp([q_weight + likelihoods_per_samp, pi_reg*np.ones(likelihoods_per_samp.shape)], axis=0)
 
         #divide by the prior on the data samples
-        likelihoods_per_samp = likelihoods_per_samp - np.log(prior_pdf)
+        likelihoods_per_samp = likelihoods_per_samp - np.log(data_prior)
 
         #checks for nans in likelihood
         if np.any(np.isnan(likelihoods_per_samp)):

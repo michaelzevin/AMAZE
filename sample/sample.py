@@ -77,12 +77,6 @@ class Sampler(object):
         self.use_flows = use_flows
         self.continuous_sampling = continuous_sampling
 
-        # determine whether to sample each parameter in log
-        log_sampling = [pop_param_dict[p]['logsampling'] for p in pop_param_dict.keys()]
-        if continuous_sampling==False and any(log_sampling)==True:
-            raise ValueError("Cannot perform log sampling when doing discrete model sampling!")
-        self.log_sampling = log_sampling
-
         # kwargs
         self.sampler_name = kwargs['sampler'] if 'sampler' in kwargs else _sampler
         if self.sampler_name not in _valid_samplers.keys():
@@ -112,9 +106,13 @@ class Sampler(object):
         if continuous_sampling:
             hyperparam_bounds = []
             for p in pop_param_dict.keys():
+                transform = pop_param_dict[p]['transform']
                 pmin = min(list(pop_param_dict[p]['values'].values()))
                 pmax = max(list(pop_param_dict[p]['values'].values()))
-                hyperparam_bounds.append([pmin,pmax])
+                if transform == 'log':
+                    hyperparam_bounds.append([np.log(pmin),np.log(pmax)])
+                else:
+                    hyperparam_bounds.append([pmin,pmax])
         else:
             hyperparam_bounds = [[0, len(pop_param_dict[p]['values'].keys())] \
                                       for p in pop_param_dict.keys()]
@@ -153,7 +151,7 @@ class Sampler(object):
         #set arguments to pass to self.posterior
         posterior_args = [obsdata, models, self.submodels_dict, self.channels, \
                 prior_pdf, self.hyperparam_bounds, self.use_flows, self.continuous_sampling, \
-                self.log_sampling, smallest_N, _concentration]
+                smallest_N, _concentration]
         if verbose:
             print("Sampling...")
         #initialise emcee sampler with self.posterior as probability function
@@ -188,7 +186,7 @@ class Sampler(object):
 # --- Define the likelihood and prior
 
 def lnp(x, submodels_dict, _concentration, hyperparam_bounds, \
-        continuous_sampling, log_sampling):
+        continuous_sampling):
     """
     Log of the prior. 
     Returns logL of -inf for points outside hyperparam_bounds.
@@ -241,7 +239,6 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
     smallest_N : int
         Value by which to regularise the population distributions.
         See eq. 2 in Colloms et al.
-
     Returns
         log likelihood summed over events, accounting for detection efficiency
     """
@@ -256,7 +253,6 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
     # initialize detection effiency for this hypermodel
     alpha = 0
 
-    # FIXME: Do we need to pass on log_sampling here?
     if continuous_sampling:
         model_hyperparams = x[:len(submodels_dict)]
     else:
@@ -286,10 +282,10 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
             lnprob = logsumexp([lnprob, np.log(beta) + smdl(data, conditional_hps, smallest_N, data_prior=prior_pdf)], axis=0)
             #for multiple hyperparameters, dictionary key is tuple, but for single hyperparameters, keys are ints
             if smdl.conditionals > 1:
-                hyperparam_idxs = tuple(hyperparam_idxs)
+                model_hyperparam_idxs = tuple(hyperparam_idxs)
             else:
-                hyperparam_idxs = hyperparam_idxs[0]
-            alpha += beta * smdl.alpha[hyperparam_idxs]
+                model_hyperparam_idxs = hyperparam_idxs[0]
+            alpha += beta * smdl.alpha[model_hyperparam_idxs]
 
         else:
             model_list_tmp = model_list.copy()
@@ -303,7 +299,7 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
 
 
 def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_bounds, \
-           use_flows, continuous_sampling, log_sampling, smallest_N, _concentration):
+           use_flows, continuous_sampling, smallest_N, _concentration):
     """
     Combines the prior and likelihood to give a log posterior probability 
     at a given point
@@ -327,8 +323,6 @@ def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_boun
         True if using normalising flows for inference. If False, uses KDEs
     continuous_sampling : bool
         True if performing continuous inference with normalising flows flows. If False, performs discrete inference (flows or KDEs)
-    log_sampling : list of bool
-        Same length as number of hyperparameters, with indices indicating whether sampling in logspace
     smallest_N : int
         Value by which to regularise the population distributions.
         See eq. 2 in Colloms et al.
@@ -340,7 +334,7 @@ def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_boun
     """
     # Prior
     log_prior = lnp(x, submodels_dict, _concentration, \
-                    hyperparam_bounds, continuous_sampling, log_sampling)
+                    hyperparam_bounds, continuous_sampling)
     if not np.isfinite(log_prior):
         return log_prior
 

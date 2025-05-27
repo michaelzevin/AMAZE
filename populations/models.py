@@ -40,7 +40,7 @@ def get_params(df, params, spinmag_distr):
 
     return df
 
-def read_hdf5(path, channel, channel_smdl_names, smdl_indxs_combos):
+def read_hdf5(path, channel, channel_smdl_names, smdl_indxs_combos, param_dict, spinmag):
     """
     For CE channel, returns dict of submodels for all chi_b and alpha_CE values, as keys i,j in dictionary
     For other channels, returns dictionary of submodels varying with chi_b for that channel
@@ -64,6 +64,9 @@ def read_hdf5(path, channel, channel_smdl_names, smdl_indxs_combos):
         else:
             dict_key = smdl_indxs_combos[i]
         popsynth_outputs[dict_key]=pd.read_hdf(path, key=channel_smdl_name)
+        # synthesize parameters if not present in the dataframe
+        popsynth_outputs[dict_key] = get_params(popsynth_outputs[dict_key], \
+                                param_dict.keys(), spinmag)
         # perform transformations on the dataframe, if necessary
         popsynth_outputs[dict_key] 
     return(popsynth_outputs)
@@ -126,10 +129,10 @@ def get_channel_smdls(chnl, deepest_models, hyperparam_pts_per_dim):
 
     return channel_smdls, smdl_indxs_combos
 
-def get_popsynth_outputs(file_path, chnl, channel_dict):
+def get_popsynth_outputs(file_path, chnl, channel_dict, param_dict, spinmag):
     deepest_models, hyperparam_pts_per_dim = get_deepest_models(file_path, channel_dict)
     channel_smdls, smdl_indxs_combos = get_channel_smdls(chnl, deepest_models, hyperparam_pts_per_dim)
-    popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos)
+    popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos, param_dict, spinmag)
     return popsynth_outputs
 
 def get_models(file_path, channel_dict, param_dict, \
@@ -180,13 +183,12 @@ def get_models(file_path, channel_dict, param_dict, \
                 if hp in channel_dict[chnl]['parameters']:
                     channel_hyperparams[hp] = hyperparam_dict[hp]
 
-            popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos)
-            # synthesize parameters if not present in the dataframe
-            popsynth_outputs = get_params(popsynth_outputs, \
-                                param_dict.keys(), spinmag)
-            # FIXME: need to feed this param_dict to pass along bounds
-            flow_models[chnl] = FlowModel.from_samples(chnl, popsynth_outputs, \
-                param_dict, channel_hyperparams, smdl_indxs_combos, \
+            popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos, param_dict, kwargs['spinmag'])
+            flow_models[chnl] = FlowModel.from_samples(chnl, \
+                popsynth_outputs, \
+                param_dict, \
+                channel_hyperparams, \
+                smdl_indxs_combos, \
                 sensitivity=sensitivity)
         return deepest_models, flow_models
     #KDE case: reads in submodel for each of the deepest model and sends to KDEModel

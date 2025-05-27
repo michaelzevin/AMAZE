@@ -57,7 +57,6 @@ def amaze(ini_file):
                 param_dict = settings['event-parameter-dict'], \
                 hyperparam_dict = settings['population-parameter-dict'], \
                 use_flows = settings['use-flows'], \
-                flow_path=settings['flow-model-path'], \
                 sensitivity=settings['sensitivity-key'], \
                 spinmag=settings['spin-mag-distribution'], \
                 max_samps=settings['kde-max-samples'], \
@@ -195,15 +194,11 @@ def amaze(ini_file):
     if settings['use-flows']==True:
         # MJZ: Haven't tested this yet
         if verbose:
-            print('Training/Loading flows...\n')
-        for channel in channels:
+            print('Training or loading normalising flow models...\n')
+        # MJZ: Haven't tested this yet
+        for i, channel in enumerate(channels):
             if settings['train-flows'] == True:
-                if settings['use-wandb'] == True:
-                    # initialise weights and biases for flow network optimisation
-                    pop_models[channel].wandb_init(\
-                        settings['flow-settings'][channel]['epochs'])
-                else:
-                    pop_models[channel].train(\
+                pop_models[channel].train(\
                         settings['flow-settings'][channel]['N-transformations'], \
                         settings['flow-settings'][channel]['spline-bins'], \
                         settings['flow-settings'][channel]['N-neurons'], \
@@ -292,12 +287,10 @@ def amaze(ini_file):
             samples[:,:,hyper_idx] = np.floor(samples[:,:,hyper_idx]).astype(int)
     else:
         # transform any samples evaluated in log space back from log space
-        for hyper_idx in list(submodels_dict.keys()):
-            transform = settings['population-parameter-dict'][list(settings['population-parameter-dict'].keys())[hyper_idx]]['transform']
+        for hyper_idx, hyper_param in enumerate(settings['population-parameter-dict'].keys()):
+            transform = settings['population-parameter-dict'][hyper_param]['transform']
             if transform == 'log':
                 samples[:,:,hyper_idx] = np.exp(samples[:,:,hyper_idx])
-
-
 
     # Reshape to have all steps from all walkers in a single dimension
     original_shape = samples.shape
@@ -307,25 +300,26 @@ def amaze(ini_file):
 
 
     # Get detectable branching fractions as well as underlying
-    # FIXME: Can we get this working for flows? I know it requires additions.
     detectable_samples=None
-    if settings['use-flows']==False:
-        if verbose:
-            print("Converting underlying betas from sampler to detectable betas...\n")
-        detectable_samples, model0 = helper_functions.DetectableBranchingFractions(\
-                        samples=samples, \
-                        model_names=model_names, \
-                        models=pop_models, \
-                        submodels_dict=submodels_dict, \
-                        channels_dict=settings['channels-dict'], \
-                        branching_fractions = settings['branching-fractions'], \
-                        model0=model0, \
-                        true_model=true_model)
+    if verbose:
+        print("Converting underlying betas from sampler to detectable betas...\n")
+    detectable_samples, model0 = helper_functions.DetectableBranchingFractions(\
+                    samples=samples, \
+                    model_names=model_names, \
+                    models=pop_models, \
+                    submodels_dict=submodels_dict, \
+                    channels_dict=settings['channels-dict'], \
+                    branching_fractions = settings['branching-fractions'], \
+                    model0=model0, \
+                    true_model=true_model,\
+                    use_flows= settings['use-flows'],\
+                    continuous_sampling = settings['continuous-sampling']    )
 
 
     # --- Print summary info about the sampling
     if verbose:
         print("Sample breakdown:")
+        #SC: Need equivalent for continuous inference
         helper_functions.PrintSummaryStatistics(\
                     samples=samples, \
                     samples_det=detectable_samples, \
@@ -335,8 +329,9 @@ def amaze(ini_file):
                     submodels_dict=submodels_dict)
 
 
-    # --- Plot samples and histograms of betas per model
-    if settings['make-plots']==True:
+    # Plot samples and histograms of betas per model
+    #SC: Need equivalent for continuous inference
+    if settings['make-plots']:
         if verbose:
             print("Plotting samples...")
         # Need samples back in their original shape (separated by chains)

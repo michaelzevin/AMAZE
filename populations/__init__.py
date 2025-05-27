@@ -15,8 +15,9 @@ import pandas as pd
 from scipy.stats import norm, truncnorm
 from .population_utils.bounded_Nd_kde import Bounded_Nd_kde
 from .population_utils.transform import mtotq_to_mchirp, mtoteta_to_mchirpq, eta_to_q, mchirpq_to_m1m2
-from .population_utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults
-proj_factor = projection_factor_Dominik2015_interp()
+#SC: is this necessary? the selection effects file has been removed
+#from .population_utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults
+#proj_factor = projection_factor_Dominik2015_interp()
 
 from astropy import cosmology
 from astropy.cosmology import z_at_value
