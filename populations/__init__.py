@@ -48,9 +48,7 @@ class Model(object):
 
 class KDEModel(Model):
     @staticmethod
-    def from_samples(label, samples, param_dict, sensitivity=None, \
-                        max_samps=None, kde_bandwidth=None, \
-                        store_optimal_snrs=False, **kwargs):
+    def from_samples(label, samples, param_dict, sensitivity=None, **kwargs):
         """
         Generate a KDE model instance from `samples`, where `params` are \
         series in the `samples` dataframe. Additional *kwargs* can be passed \
@@ -76,6 +74,11 @@ class KDEModel(Model):
         store_optimal_snrs : bool
             whether to store optimal SNRs for each sample (only used if mock uncertainty is SNR-dependent)
         """
+
+        max_samps=kwargs['max_samps']
+        kde_bandwidth=kwargs['kde_bandwidth']
+        store_optimal_snrs=kwargs['store_optimal_snrs']
+        
         # check that the provdided sensitivity series is in the dataframe
         if sensitivity is not None:
             if 'pdet_'+sensitivity not in samples.columns:

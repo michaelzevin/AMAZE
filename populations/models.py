@@ -205,16 +205,13 @@ def get_models(file_path, channel_dict, param_dict, \
                         df = pd.read_hdf(file_path, key=smdl)
                         # synthesize parameters if not present 
                         #   in the dataframe
-                        df = get_params(df, param_dict.keys(), spinmag)
+                        df = get_params(df, param_dict.keys(), kwargs['spinmag'])
                         label = '/'.join(smdl_list)
                         mdl = KDEModel.from_samples(\
                                 label=label, \
                                 samples=df, \
                                 param_dict=param_dict, \
                                 sensitivity=sensitivity, \
-                                max_samps=max_samps, \
-                                kde_bandwidth=kde_bandwidth, \
-                                store_optimal_snrs=store_optimal_snrs, \
                                 **kwargs)
                         current_level[part] = mdl
                     else:
