@@ -129,12 +129,6 @@ def get_channel_smdls(chnl, deepest_models, hyperparam_pts_per_dim):
 
     return channel_smdls, smdl_indxs_combos
 
-def get_popsynth_outputs(file_path, chnl, channel_dict, param_dict, spinmag):
-    deepest_models, hyperparam_pts_per_dim = get_deepest_models(file_path, channel_dict)
-    channel_smdls, smdl_indxs_combos = get_channel_smdls(chnl, deepest_models, hyperparam_pts_per_dim)
-    popsynth_outputs = read_hdf5(file_path, chnl, channel_smdls, smdl_indxs_combos, param_dict, spinmag)
-    return popsynth_outputs
-
 def get_models(file_path, channel_dict, param_dict, \
             hyperparam_dict, use_flows, \
             sensitivity=None, **kwargs):
