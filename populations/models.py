@@ -157,7 +157,19 @@ def get_models(file_path, channel_dict, param_dict, \
         discrete values (with value key)/full names as values
     use_flows : bool
         flag for whether to use KDEs or flows in inference
-
+    sensitivity : str
+        key string of detection probabilities to use for determining detection efficiency
+          'pdet_${sensitivity}' in the hdf5 file
+    Kwargs
+    ----------
+    spinmag : str
+        spin magnitude distribution to assume of effective spins are not provided
+    max_samps : int
+        maximum number of samples to use for each KDE
+    kde_bandwidth : float
+        bandwidth of KDEs
+    store_optimal_snrs : bool
+        only True if using mock observations with SNR-based uncertainty
     Returns
     ----------
     deepest_models : list of str

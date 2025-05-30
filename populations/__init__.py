@@ -15,9 +15,6 @@ import pandas as pd
 from scipy.stats import norm, truncnorm
 from .population_utils.bounded_Nd_kde import Bounded_Nd_kde
 from .population_utils.transform import mtotq_to_mchirp, mtoteta_to_mchirpq, eta_to_q, mchirpq_to_m1m2
-#SC: is this necessary? the selection effects file has been removed
-#from .population_utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults
-#proj_factor = projection_factor_Dominik2015_interp()
 
 from astropy import cosmology
 from astropy.cosmology import z_at_value
@@ -31,6 +28,7 @@ _snrscale_sigmas = {"mchirp": 0.04, "eta": 0.03, "chieff": 0.14}      # TOUPDATE
 _normalization_bounds_defaults = {"mchirp": (0,100), "q": (0,1), "chieff": (-1,1), "z": (0,10)}
 _kde_bandwidth_default = 0.01
 _max_samps_default = int(1e5)
+_store_optimal_snrs_default = False
 
 """
 Set of classes used to construct statistical models of populations.
@@ -75,9 +73,9 @@ class KDEModel(Model):
             whether to store optimal SNRs for each sample (only used if mock uncertainty is SNR-dependent)
         """
 
-        max_samps=kwargs['max_samps']
-        kde_bandwidth=kwargs['kde_bandwidth']
-        store_optimal_snrs=kwargs['store_optimal_snrs']
+        max_samps = kwargs['max_samps'] if 'max_samps' in kwargs else _max_samps_default
+        kde_bandwidth = kwargs['kde_bandwidth'] if 'kde_bandwidth' in kwargs else _kde_bandwidth_default
+        store_optimal_snrs = kwargs['store_optimal_snrs'] if 'store_optimal_snrs' in kwargs else _store_optimal_snrs_default
         
         # check that the provdided sensitivity series is in the dataframe
         if sensitivity is not None:
