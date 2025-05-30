@@ -163,6 +163,9 @@ class FlowModel(Model):
         self.param_dict = copy.deepcopy(param_dict)
 
         #initialises list of population hyperparameters model names and values from hyperparameter dictionary
+        #set hyperparameters to log of the original values if transform is specified as log in dictionary
+        #Note that if loading a flow model with a hyperparameter specified with a log transform, the flow needs
+        #to have previously been trained with that hyperparameter specified with a log transform.
         self.hyperparam_models = []
         self.hp_vals = []
         for hp in channel_hyperparams:
