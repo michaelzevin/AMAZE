@@ -15,16 +15,20 @@ import pandas as pd
 from scipy.stats import norm, truncnorm
 from .population_utils.bounded_Nd_kde import Bounded_Nd_kde
 from .population_utils.transform import mtotq_to_mchirp, mtoteta_to_mchirpq, eta_to_q, mchirpq_to_m1m2
+from .population_utils.selection_effects import projection_factor_Dominik2015_interp, _PSD_defaults
 
 from astropy import cosmology
 from astropy.cosmology import z_at_value
 import astropy.units as u
 cosmo = cosmology.Planck18
 
-# Need to ensure all parameters are normalized over the same range
+# mock uncertainty defaults
 _posterior_sigmas = {"mchirp": 1.512, "q": 0.166, "chieff": 0.1043, "z": 0.0463}   # TOUPDATE
 _snrscale_sigmas = {"mchirp": 0.04, "eta": 0.03, "chieff": 0.14}      # TOUPDATE
+# projection factor interpolant from Dominik et al. 2015
+proj_factor = projection_factor_Dominik2015_interp()
 
+# default values if not provided
 _normalization_bounds_defaults = {"mchirp": (0,100), "q": (0,1), "chieff": (-1,1), "z": (0,10)}
 _kde_bandwidth_default = 0.01
 _max_samps_default = int(1e5)
