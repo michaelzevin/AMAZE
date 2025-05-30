@@ -160,7 +160,7 @@ class FlowModel(Model):
         super()
         self.channel_label = channel
         self.samples = samples
-        self.param_dict = param_dict
+        self.param_dict = copy.deepcopy(param_dict)
 
         #initialises list of population hyperparameters model names and values from hyperparameter dictionary
         self.hyperparam_models = []
