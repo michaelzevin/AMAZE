@@ -224,46 +224,66 @@ def GetDeepestModels(model_names, models, hyperparam_dict, use_flows=False):
         all_models_at_deepest = all([len(x.split('/')[1:])==Nhyper for x in model_names])
     return model_names, models
 
-def DetectableBranchingFractions(samples, model_names, models, submodels_dict, channels_dict, branching_fractions, model0, true_model):
+def DetectableBranchingFractions(samples, model_names, models, submodels_dict, channels_dict, branching_fractions, model0, true_model, use_flows, continuous_sampling):
     """
     Calculates detectable branching fractions after the inference is run
-    Currently only supported for discrete inference
     """
     channels = list(channels_dict.keys())
     detectable_samples = samples.copy()
     smdls = list(set([x.split('/',1)[1] for x in model_names]))
-    # get the conversion factors between the detectable and underlying distributions
-    for smdl in sorted(smdls):
-        detectable_convfacs = []
-        for channel in channels:
-            detectable_convfacs.append(GetFromDict(models, [channel]+smdl.split('/')).alpha)
-        detectable_convfacs = np.asarray(detectable_convfacs)
-        # loop over hyperparams to get samples in this submodel
-        hyperparams = smdl.split('/')
-        for idx, param in enumerate(hyperparams):
-            hyper_idx = list(submodels_dict[idx].keys())[list(submodels_dict[idx].values()).index(param)]
-            if idx==0:
-                matching_idxs = np.where(samples[:,idx] == hyper_idx)[0]
-                matching_samps = samples[matching_idxs]
-            else:
-                matching_idxs = matching_idxs[np.where(matching_samps[:,idx] == hyper_idx)[0]]
-                matching_samps = samples[matching_idxs]
-        # if no samples are in this model, continue
-        if len(matching_idxs)==0:
-            continue
-        # convert hyperparams of these samples accordingly to get the underlying betas
-        converted_betas = detectable_samples[matching_idxs,len(hyperparams):] * detectable_convfacs
-        converted_betas /= converted_betas.sum(axis=1, keepdims=True)
-        detectable_samples[matching_idxs,len(hyperparams):] = converted_betas
+    if use_flows==False:
+        # get the conversion factors between the detectable and underlying distributions
+        for smdl in sorted(smdls):
+            detectable_convfacs = []
+            for channel in channels:
+                detectable_convfacs.append(GetFromDict(models, [channel]+smdl.split('/')).alpha)
+            detectable_convfacs = np.asarray(detectable_convfacs)
+            # loop over hyperparams to get samples in this submodel
+            hyperparams = smdl.split('/')
+            for idx, param in enumerate(hyperparams):
+                hyper_idx = list(submodels_dict[idx].keys())[list(submodels_dict[idx].values()).index(param)]
+                if idx==0:
+                    matching_idxs = np.where(samples[:,idx] == hyper_idx)[0]
+                    matching_samps = samples[matching_idxs]
+                else:
+                    matching_idxs = matching_idxs[np.where(matching_samps[:,idx] == hyper_idx)[0]]
+                    matching_samps = samples[matching_idxs]
+            # if no samples are in this model, continue
+            if len(matching_idxs)==0:
+                continue
+            # convert hyperparams of these samples accordingly to get the underlying betas
+            converted_betas = detectable_samples[matching_idxs,len(hyperparams):] * detectable_convfacs
+            converted_betas /= converted_betas.sum(axis=1, keepdims=True)
+            detectable_samples[matching_idxs,len(hyperparams):] = converted_betas
 
-        # also save converted relative fractions to model0
-        if smdl==true_model:
-            converted_rel_fracs = detectable_convfacs * \
-                    np.asarray(list(branching_fractions.values()))
-            converted_rel_fracs /= np.sum(converted_rel_fracs)
-            for cidx, channel in enumerate(channels):
-                model0[channel].rel_frac_detectable(converted_rel_fracs[cidx])
-
+            # also save converted relative fractions to model0
+            if smdl==true_model:
+                converted_rel_fracs = detectable_convfacs * \
+                        np.asarray(list(branching_fractions.values()))
+                converted_rel_fracs /= np.sum(converted_rel_fracs)
+                for cidx, channel in enumerate(channels):
+                    model0[channel].rel_frac_detectable(converted_rel_fracs[cidx])
+    else:
+        alphas = np.zeros((detectable_samples.shape[0], len(channels_dict.keys())))
+        #get alpha given hyperparameters in each sample
+        for i, samp in enumerate(samples):
+            for cidx, chnl in enumerate(channels_dict.keys()):
+                smdl = models[chnl]
+                #find detection efficiency
+                if continuous_sampling:
+                    alphas[i, cidx] = smdl.get_alpha([samp[:smdl.conditionals]])
+                else:
+                    if smdl.conditionals > 1:
+                        hyperparam_idxs = tuple(samp[:smdl.conditionals])
+                    else:
+                        hyperparam_idxs = samp[0]
+                    alphas[i, cidx] = smdl.alpha[hyperparam_idxs]
+        #multiply by detection efficiency
+        detectable_samples = (detectable_samples[:,2:] * alphas)
+        #divide by sum across channels
+        detectable_samples /= detectable_samples.sum(axis=1, keepdims=True)
+        #concatenate detectable branching fractions back with astrophysical parameter samples
+        detectable_samples = np.concatenate((samples[:,:2],detectable_samples), axis=1)
     return detectable_samples, model0
 
 def PrintSummaryStatistics(samples, samples_det, model_names, \
