@@ -57,6 +57,7 @@ def amaze(ini_file):
                 param_dict = settings['event-parameter-dict'], \
                 hyperparam_dict = settings['population-parameter-dict'], \
                 use_flows = settings['use-flows'], \
+                random_seed = settings['random-seed'] \
                 sensitivity=settings['sensitivity-key'], \
                 spinmag=settings['spin-mag-distribution'], \
                 max_samps=settings['kde-max-samples'], \

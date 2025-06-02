@@ -52,7 +52,7 @@ class Model(object):
 
 class FlowModel(Model):
     @staticmethod
-    def from_samples(channel, samples, param_dict, channel_hyperparams, smdl_indxs_combos, sensitivity=None):
+    def from_samples(channel, samples, param_dict, channel_hyperparams, smdl_indxs_combos, random_seed, sensitivity=None):
         """
         Generate a normalising flow model instance from `samples`, where the keys in `params_dict` are a series in the `samples` dataframe. 
         
@@ -110,9 +110,9 @@ class FlowModel(Model):
             if sensitivity is not None:
                 # if cosmological weights are provided, do mock draws from the pop
                 if 'weight' in sbml_samps.keys():
-                    mock_samp = sbml_samps.sample(int(1e6), weights=(sbml_samps['weight']/len(sbml_samps)), replace=True)
+                    mock_samp = sbml_samps.sample(int(1e6), weights=(sbml_samps['weight']/len(sbml_samps)), replace=True, random_state=random_seed)
                 else:
-                    mock_samp = sbml_samps.sample(int(1e6), replace=True)
+                    mock_samp = sbml_samps.sample(int(1e6), replace=True, random_state=random_seed)
                 alpha[dict_key]=np.sum(mock_samp['pdet_'+sensitivity]) / len(mock_samp)
             else:
                 alpha[dict_key]=1.0
