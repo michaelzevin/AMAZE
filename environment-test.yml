@@ -1,0 +1,17 @@
+name: AMAZE-py312
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - conda-forge::h5py
+  - conda-forge::pandas
+  - conda-forge::scipy
+  - conda-forge::tqdm
+  - conda-forge::astropy
+  - conda-forge::wandb
+  - conda-forge::scikit-learn
+  - glasflow
+  - conda-forge::emcee
+  - conda-forge::pytables
+  - conda-forge::seaborn
