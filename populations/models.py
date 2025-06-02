@@ -130,7 +130,7 @@ def get_channel_smdls(chnl, deepest_models, hyperparam_pts_per_dim):
     return channel_smdls, smdl_indxs_combos
 
 def get_models(file_path, channel_dict, param_dict, \
-            hyperparam_dict, use_flows, \
+            hyperparam_dict, use_flows, random_seed, \
             sensitivity=None, **kwargs):
     """
     Call this to get all the models and submodels, as well
@@ -151,6 +151,8 @@ def get_models(file_path, channel_dict, param_dict, \
         discrete values (with value key)/full names as values
     use_flows : bool
         flag for whether to use KDEs or flows in inference
+    random_seed : int
+        random seed for the run to be passed to KDE and Flow models
     sensitivity : str
         key string of detection probabilities to use for determining detection efficiency
           'pdet_${sensitivity}' in the hdf5 file
@@ -195,6 +197,7 @@ def get_models(file_path, channel_dict, param_dict, \
                 param_dict, \
                 channel_hyperparams, \
                 smdl_indxs_combos, \
+                random_seed = random_seed, \
                 sensitivity=sensitivity)
         return deepest_models, flow_models
     #KDE case: reads in submodel for each of the deepest model and sends to KDEModel
@@ -217,6 +220,7 @@ def get_models(file_path, channel_dict, param_dict, \
                                 label=label, \
                                 samples=df, \
                                 param_dict=param_dict, \
+                                random_seed = random_seed, \
                                 sensitivity=sensitivity, \
                                 **kwargs)
                         current_level[part] = mdl
