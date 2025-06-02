@@ -40,6 +40,9 @@ def amaze(ini_file):
     # --- Set random seed
     if settings['random-seed']:
         np.random.seed(settings['random-seed'])
+        random_seed = settings['random-seed']
+    else:
+        random_seed = None
 
     # --- Set verbosity
     verbose = settings['verbose']
@@ -57,6 +60,7 @@ def amaze(ini_file):
                 param_dict = settings['event-parameter-dict'], \
                 hyperparam_dict = settings['population-parameter-dict'], \
                 use_flows = settings['use-flows'], \
+                random_seed = random_seed \
                 sensitivity=settings['sensitivity-key'], \
                 spinmag=settings['spin-mag-distribution'], \
                 max_samps=settings['kde-max-samples'], \
