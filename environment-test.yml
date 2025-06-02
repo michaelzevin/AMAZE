@@ -4,14 +4,14 @@ channels:
   - defaults
 dependencies:
   - python=3.12
-  - conda-forge::h5py
-  - conda-forge::pandas
-  - conda-forge::scipy
-  - conda-forge::tqdm
-  - conda-forge::astropy
-  - conda-forge::wandb
-  - conda-forge::scikit-learn
-  - glasflow
-  - conda-forge::emcee
-  - conda-forge::pytables
-  - conda-forge::seaborn
+  - conda-forge::h5py=3.13.0
+  - conda-forge::pandas=2.2.3
+  - conda-forge::scipy=1.15.2
+  - conda-forge::tqdm=4.67.1
+  - conda-forge::astropy=7.0.2
+  - conda-forge::wandb=0.19.11
+  - conda-forge::scikit-learn=1.6.1
+  - glasflow=0.4.1
+  - conda-forge::emcee=3.1.6
+  - conda-forge::pytables=3.10.2
+  - conda-forge::seaborn=0.13.2
