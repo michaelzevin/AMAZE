@@ -1,5 +1,5 @@
 # ignore the following file types
-
+/rns/*
 *.pyc
 *.DS_Store
 *__pycache__
