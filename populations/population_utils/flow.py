@@ -100,7 +100,7 @@ class NFlow():
         #spline - nodes used to model the distribution of CDFs
         optimiser = torch.optim.Adam(self.network.parameters(), lr=lr, weight_decay=0)
         #set learning rate cheduler
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=epochs, eta_min=0, last_epoch=- 1, verbose=False)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=epochs, eta_min=0, last_epoch=- 1)
 
         n_epochs = epochs
         n_batches = batch_no 

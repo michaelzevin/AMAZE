@@ -240,15 +240,14 @@ class FlowModel(Model):
         models_stack = np.copy(models)
         #map samples with logistic mapping before dividing into training and validation data
         for pidx, param in enumerate(self.param_dict):
-            if self.param_dict[param]['transf'] == 'logit':
-                models_stack[:,pidx], self.param_dict[param]['logit_max'], self.param_dict[param]['max'] = self.logistic(models_stack[:,pidx],\
-                    wholedataset=True, rescale_max=self.param_dict[param]['bounds'][1])
-            elif self.param_dict[param]['transf'] == 'tanh':
-                models_stack[:,pidx] = np.arctanh(models_stack[:,pidx])
-            else:
-                print(f'No transformation type specified for {param} dimension, attempting logistic transform')
-                models_stack[:,pidx], self.param_dict[param]['logit_max'], self.param_dict[param]['max'] = self.logistic(models_stack[:,pidx],\
-                    wholedataset=True, rescale_max=self.param_dict[param]['bounds'][1])
+            try:
+                if self.param_dict[param]['transf'] == 'logit':
+                    models_stack[:,pidx], self.param_dict[param]['logit_max'], self.param_dict[param]['max'] = self.logistic(models_stack[:,pidx],\
+                        wholedataset=True, rescale_max=self.param_dict[param]['limits'][1])
+                elif self.param_dict[param]['transf'] == 'tanh':
+                    models_stack[:,pidx] = np.arctanh(models_stack[:,pidx])
+            except:
+                raise KeyError(f'Must specify how to transform {param} with `transf` entry in `event-parameter-dict`.')
             
         #repeat subpopulation hyperparameter values Nsamps times for each combination of hyperparameter values
         hp_combos = np.squeeze(list(product(*self.hp_vals)))
@@ -458,6 +457,10 @@ class FlowModel(Model):
         data_normed = data/rescale_max
         
         #sample must be within bounds for logistic function to return definite value
+        if np.any(data_normed >= 1):
+            #artificially increase upper bound for troublesome training samples
+            rescale_max = rescale_max*1.001
+            data_normed = data/rescale_max
         if np.logical_or(data_normed <= 0, data_normed >= 1).any():
             raise Exception('Data out of bounds for logistic mapping')
 
@@ -533,7 +536,7 @@ class FlowModel(Model):
         #define flow hyperparams as class properties
         self.no_trans = no_trans
         self.no_neurons = no_neurons
-        self.no_blocks = no_neurons
+        self.no_blocks = no_blocks
         self.no_bins = no_bins
 
         #FIXME - make this a settable parameter
@@ -548,7 +551,7 @@ class FlowModel(Model):
 
         #FIXME: take network parameter and mapping info from ini file rather than config
         #write or append channel config to json file
-        channel_config = {'transforms':no_trans, 'neurons':no_neurons,'blocks':no_neurons,'bins':no_bins}
+        channel_config = {'transforms':no_trans, 'neurons':no_neurons,'blocks':no_blocks,'bins':no_bins}
 
         #set mapping parameters into channel config
         for param in self.param_dict:
@@ -559,8 +562,8 @@ class FlowModel(Model):
         channel_json[self.channel_label] = channel_config
 
         #check if config file exists (e.g. containing other channels), and update this channel to current config
-        if os.path.isfile(f'{filepath}flowconfig.json'):
-            with open(f'{filepath}flowconfig.json', 'r') as f:
+        if os.path.isfile(f'{filepath}/flowconfig.json'):
+            with open(f'{filepath}/flowconfig.json', 'r') as f:
                 old_config = json.load(f)
             #update the old config of this channel
             old_config[self.channel_label] = channel_config
@@ -612,7 +615,7 @@ class FlowModel(Model):
                 for param in self.param_dict:
                     if self.param_dict[param]['transf'] == 'logit':
                         for key in ['logit_max', 'max']:
-                            self.param_dict[param][key] = config[self.channel_label][key]
+                            self.param_dict[param][key] = config[self.channel_label][param][key]
             except:
                 #deal with old hardcoding mapping saving
                 mappings = np.load(f'{filepath}/{self.channel_label}_mappings.npy', allow_pickle=True)

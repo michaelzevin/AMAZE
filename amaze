@@ -60,7 +60,7 @@ def amaze(ini_file):
                 param_dict = settings['event-parameter-dict'], \
                 hyperparam_dict = settings['population-parameter-dict'], \
                 use_flows = settings['use-flows'], \
-                random_seed = random_seed \
+                random_seed = random_seed, \
                 sensitivity=settings['sensitivity-key'], \
                 spinmag=settings['spin-mag-distribution'], \
                 max_samps=settings['kde-max-samples'], \
@@ -202,8 +202,9 @@ def amaze(ini_file):
             if settings['train-flows'] == True:
                 pop_models[channel].train(\
                         settings['flow-settings'][channel]['N-transformations'], \
-                        settings['flow-settings'][channel]['spline-bins'], \
                         settings['flow-settings'][channel]['N-neurons'], \
+                        settings['flow-settings'][channel]['N-blocks'], \
+                        settings['flow-settings'][channel]['spline-bins'], \
                         settings['flow-settings'][channel]['learning-rate'], \
                         settings['flow-settings'][channel]['epochs'], \
                         settings['n-batches'], \
