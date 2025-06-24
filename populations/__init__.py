@@ -303,17 +303,19 @@ class KDEModel(Model):
         #SC: can this be vectorised?
         for idx, (obs, d_pdf) in enumerate(zip(np.atleast_3d(data),data_prior)):
             # Evaluate the KDE at the samples
-            likelihood_per_samp = self.pdf(obs) / d_pdf
+            likelihood_per_samp = self.pdf(obs) 
+
+            if smallest_N is not None:
+                # population probability plus uniform regularisation
+                pi_reg = 1/(smallest_N+1)
+                q_weight = smallest_N/(smallest_N+1)
+                likelihood_per_samp = (q_weight * likelihood_per_samp) + pi_reg
+            likelihood_per_samp = likelihood_per_samp / d_pdf
             likelihood[idx] += (1.0/len(obs)) * np.sum(likelihood_per_samp)
         # store value for multiprocessing TODELETE
         #if return_dict is not None:
         #    return_dict[proc_idx] = likelihood
 
-        if smallest_N is not None:
-            # population probability plus uniform regularisation
-            pi_reg = 1/(smallest_N+1)
-            q_weight = smallest_N/(smallest_N+1)
-            likelihood = (q_weight * likelihood) + pi_reg
         return likelihood
 
     def marginalize(self, params, bandwidth=None, detectable=False):
