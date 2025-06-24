@@ -7,7 +7,6 @@ from itertools import product
 from . import *
 from .population_utils.transform import _DEFAULT_TRANSFORMS, \
     _uniform_spinmag, _isotropic_spinmag
-from .Pop_Flows import FlowModel
 
 _VALID_SPINMAG_DISTR = {
     # Uniform - |a| ~ uniform distribution in 0, 1
