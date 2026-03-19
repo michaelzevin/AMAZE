@@ -249,9 +249,9 @@ class NFlow():
             conditional = torch.from_numpy(conditional.astype(np.float32))
             #tile as many conditional hyperparameter values as no samples
             conditional = conditional.tile(no_samples,1)
-            samples = self.network.sample(no_samples, conditional=conditional)
+            samples = self.network.sample(no_samples, conditional=conditional.to(self.device))
 
-        return(samples)
+        return(samples.cpu())
 
     def get_training_data(self, training_samples):
         """
@@ -368,7 +368,8 @@ class NFlow():
         """
 
         #make sure samples in right format
-        sample = torch.from_numpy(sample.astype(np.float32)).to(self.device)
+        #sample is now float64 to prevent rounding infs in jacobian
+        sample = torch.from_numpy(sample.astype(np.float64)).to(self.device)
         mapped_sample = torch.from_numpy(mapped_sample.astype(np.float32)).to(self.device)
         hyperparams = torch.from_numpy(conditionals.astype(np.float32)).to(self.device)
         #store shape
