@@ -4,6 +4,7 @@ channels:
   - defaults
 dependencies:
   - python=3.12
+  - numpy=2.2.6
   - conda-forge::h5py=3.13.0
   - conda-forge::pandas=2.2.3
   - conda-forge::scipy=1.15.2
