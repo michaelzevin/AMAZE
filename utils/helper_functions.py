@@ -29,6 +29,9 @@ def ParseIniFile(file_path):
     Parses an INI file and returns a dictionary with sections as keys and
     dictionaries of key-value pairs as values.
     """
+    if os.path.isfile(file_path) is False:
+        raise Exception("Path to config file does not exist")
+     
     config = configparser.ConfigParser()
     config.read(file_path)
 
