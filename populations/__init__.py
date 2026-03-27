@@ -13,6 +13,7 @@ import json
 import numpy as np
 import scipy as sp
 import pandas as pd
+import torch
 from scipy.stats import norm, truncnorm
 from scipy.special import logit
 from scipy.special import logsumexp
@@ -54,27 +55,52 @@ class Model(object):
     def __call__(self, data):
         return None
 
-    def get_alpha(self, samples, sensitivity):
-        # check that the provdided sensitivity series is in the dataframe
+    def get_alpha(self, samples, sensitivity, multisensitivity):
+        # get *\alpha* for each model, defined as 
+        #   \int p(\theta|\lambda) Pdet(\theta) d\theta
+        # if no sensitivity key is provided, assume equal sensitivity, i.e. alpha=1
+
         if sensitivity is not None:
+            # check that the provdided sensitivity series is in the dataframe
             if 'pdet_'+sensitivity not in samples.columns:
                 raise ValueError(f"{sensitivity} was specified for your detection weights, but cannot find the column 'pdet_{sensitivity}' in the samples datafarme!")
-            # get *\alpha* for each model, defined as 
-            #   \int p(\theta|\lambda) Pdet(\theta) d\theta
-            # if cosmological weights are provided, do mock draws from the pop
-            if 'weight' in samples.keys():
-                mock_samp = samples.sample(int(1e6), \
-                    weights=(samples['weight']/len(samples)), replace=True)
+
+            if multisensitivity:
+                latest_run = sensitivity.split('_')[0] #extract run from sensitivity key
+                obs_times = {'O1':{'start':1126051217, 'end':1137196817, 'det':['H1','L1']},\
+                            'O2':{'start':1164499217, 'end':1187654418, 'det':['H1','L1','V1']},\
+                            'O3a':{'start':1238112018, 'end':1253923218, 'det':['H1','L1','V1']},\
+                            'O3b':{'start':1256601618, 'end':1269302418, 'det':['H1','L1','V1']},\
+                            'O4a':{'start':1368975618, 'end':1389456018, 'det':['H1','L1']},\
+                            }
+                if latest_run not in obs_times:
+                    raise ValueError(f"{sensitivity} was specified for your detection weights, but the sensitivity must start with one of {list(obs_times.keys())} if multisensitivity is specified")
+                #find observing runs up until the specified observing run
+                obsruns = np.array(list(obs_times))
+                obsruns = obsruns[:np.argwhere(obsruns==latest_run).reshape(-1)[0]+1]
+
+                #lengths of each observing run
+                cumul_obs_times = {r: obs_times[r] for r in obsruns}
+                obs_lengths = [(cumul_obs_times[OR]['end']-cumul_obs_times[OR]['start']) for OR in list(cumul_obs_times)]
+
+                pdet_keys = [f'pdet_{run}{sensitivity[len(latest_run):]}' for run in obsruns]
+                all_pdets = np.array(samples[pdet_keys])
+                #find ave pdets over all previous runs
+                pdets = np.sum(all_pdets*obs_lengths, axis=1)/np.sum(obs_lengths)
             else:
-                mock_samp = samples.sample(int(1e6), replace=True)
-            alpha = np.sum(mock_samp['pdet_'+sensitivity]) / len(mock_samp)
+                pdets=samples['pdet_'+sensitivity]
+            # if cosmological weights are provided, do weighted average of pdet
+            if 'weight' in samples.keys():
+                alpha = np.sum(pdets*samples['weight']) / np.sum(samples['weight'])
+            else:
+                alpha = np.sum(pdets) / len(samples)
         else:
             alpha = 1.0
         return alpha
 
 class KDEModel(Model):
     @staticmethod
-    def from_samples(label, samples, param_dict, sensitivity=None, **kwargs):
+    def from_samples(label, samples, param_dict, sensitivity=None, multisensitivity=True, **kwargs):
         """
         Generate a KDE model instance from `samples`, where `params` are \
         series in the `samples` dataframe. Additional *kwargs* can be passed \
@@ -106,7 +132,7 @@ class KDEModel(Model):
         store_optimal_snrs = kwargs['store_optimal_snrs'] if 'store_optimal_snrs' in kwargs else _store_optimal_snrs_default
         
         #get alpha from parent class
-        alpha = Model().get_alpha(samples, sensitivity)
+        alpha = Model().get_alpha(samples, sensitivity, multisensitivity)
 
         # specify the series that we plan to keep along, adding weights and detection info to this
         series_to_keep = list(param_dict.keys())
@@ -517,7 +543,7 @@ def scale_to_unity(bounds):
 
 class FlowModel(Model):
     @staticmethod
-    def from_samples(channel, samples, param_dict, channel_hyperparams, smdl_indxs_combos, random_seed, sensitivity=None):
+    def from_samples(channel, samples, param_dict, channel_hyperparams, smdl_indxs_combos, sensitivity=None, multisensitivity=True):
         """
         Generate a normalising flow model instance from `samples`, where the keys in `params_dict` are a series in the `samples` dataframe. 
         
@@ -571,7 +597,7 @@ class FlowModel(Model):
                     raise ValueError("{0:s} was specified for your detection weights, but cannot find this column in the samples datafarme!")
 
             # get *\alpha* for each model, defined as \int p(\theta|\lambda) Pdet(\theta) d\theta
-            alpha[dict_key]=Model().get_alpha(sbml_samps, sensitivity)
+            alpha[dict_key]=Model().get_alpha(sbml_samps, sensitivity, multisensitivity)
 
             ### GET WEIGHTS ###
             # if cosmological weights are provided...
@@ -642,6 +668,11 @@ class FlowModel(Model):
         #initialise the keys for the samples dicts and how many training submodels exist for this channel
         self.model_keys = model_keys
         self.total_smdls = len(model_keys)
+
+        self.pi_reg = None
+        self.data = None
+        self.mapped_obs = None
+        self.data_prior = None
 
 
     def map_samples(self):
@@ -754,7 +785,7 @@ class FlowModel(Model):
 
         return samps
 
-    def __call__(self, data, conditional_hps, smallest_N, data_prior=None):
+    def __call__(self, data, conditional_hps, smallest_N, data_prior=None, device='cpu'):
         """
         Calculate the regularised likelihood of the observations give some hyperparameters.
         This is used to calculate the hyperlikelihood.
@@ -764,7 +795,7 @@ class FlowModel(Model):
             Posterior samples of observations or mock observations for which to calculate the likelihoods,
             shape[Nobs x Nsample x Nparams]
         conditional_hps : array
-            Values of hyperparameters for require submodel, of shape [self.conditionals]
+            Values of hyperparameters for require submodel, of shape [Nwalkers,self.conditionals]
         smallest_N : int
             The constant by which to add a regularisation factor, in order to give an approximately constant 
             probability of 1/smallest_N in the distribution tails 
@@ -779,43 +810,48 @@ class FlowModel(Model):
         """
 
         #initialise log likelihood as -infnity
-        likelihood = np.ones(data.shape[0]) * -np.inf
-
-        #set equal prior for all samples if prior is not specified
-        data_prior = data_prior if data_prior is not None else np.ones((data.shape[0],data.shape[1]))
-        #raise error if any samples have prior=0
-        if np.any(data_prior == 0.):
-            raise Exception('One or more of the prior samples is equal to zero')
+        likelihood = torch.ones(data.shape[0],conditional_hps.shape[0]) * -torch.inf
+        likelihood=likelihood.to(device)
 
         #maps observations into the logistically mapped space
-        mapped_obs = self.map_obs(data)
+        if self.data is None:
+            self.mapped_obs = self.map_obs(data)
+            self.data  = np.repeat(data[:,:,np.newaxis,:],np.shape(conditional_hps)[0], axis=2)
+            self.mapped_obs  = np.repeat(self.mapped_obs[:,:,np.newaxis,:],np.shape(conditional_hps)[0], axis=2)
+            #set equal prior for all samples if prior is not specified
+            self.data_prior = torch.tensor(data_prior).to(device) if data_prior is not None else torch.ones((data.shape[0],data.shape[1])).to(device)
+            self.data_prior = self.data_prior.unsqueeze(-1).repeat_interleave(conditional_hps.shape[0], dim=-1)
+            #raise error if any samples have prior=0
+            if torch.any(self.data_prior == 0.):
+                raise Exception('One or more of the prior samples is equal to zero')
 
-        #conditionals tiled into shape [Nobs x Nsamples x Nconditionals]
+
+        #conditionals tiled into shape [Nobs x Nsamples x Nwalkers x Nconditionals]
         conditional_hps = np.asarray(conditional_hps)
-        conditionals = np.repeat([conditional_hps],np.shape(mapped_obs)[1], axis=0)
-        conditionals = np.repeat([conditionals],np.shape(mapped_obs)[0], axis=0)
+        conditionals = np.repeat([conditional_hps],np.shape(self.mapped_obs)[1], axis=0)
+        conditionals = np.repeat([conditionals],np.shape(self.mapped_obs)[0], axis=0)
 
-        #calculates likelihoods for all events and all samples
-        likelihoods_per_samp = self.flow.get_logprob(data, mapped_obs, self.param_dict, conditionals)
+        #calculates likelihoods for all events and all samples and all walkers
+        likelihoods_per_samp = self.flow.get_logprob(self.data, self.mapped_obs, self.param_dict, conditionals)
 
         if smallest_N is not None:
             #sums the population probability plus uniform regularisation
-            pi_reg = np.log(1/(smallest_N+1))
-            q_weight = np.log(smallest_N/(smallest_N+1))
-            likelihoods_per_samp = logsumexp([q_weight + likelihoods_per_samp, pi_reg*np.ones(likelihoods_per_samp.shape)], axis=0)
+            if self.pi_reg is None:
+                self.pi_reg = torch.tensor(np.log(1/(smallest_N+1)*np.ones(likelihoods_per_samp.shape)), dtype=torch.float32).to(device)
+                self.q_weight = torch.tensor(np.log(smallest_N/(smallest_N+1)), dtype=torch.float32).to(device)
+            likelihoods_per_samp = torch.logsumexp(torch.stack([self.q_weight + likelihoods_per_samp, self.pi_reg]), axis=0)
 
         #divide by the prior on the data samples
-        likelihoods_per_samp = likelihoods_per_samp - np.log(data_prior)
-
-        #checks for nans in likelihood
-        if np.any(np.isnan(likelihoods_per_samp)):
-            raise Exception('Nans in likelihood.')
+        likelihoods_per_samp = likelihoods_per_samp - torch.log(self.data_prior)
 
         #adds likelihoods from samples together and then sums over events, normalise by number of samples
-        #likelihood in shape [Nobs]
-        likelihood = logsumexp([likelihood, logsumexp(likelihoods_per_samp, axis=1) - np.log(data.shape[1])], axis=0)
+        #likelihood in shape [Nobs x Nwalkers]
+        likelihood = torch.logsumexp(torch.stack([likelihood, torch.logsumexp(likelihoods_per_samp, axis=1) - torch.tensor(self.data.shape[1]).log()]), axis=0)
+        likelihood_cpu = likelihood.cpu().numpy()
 
-        return likelihood
+        del likelihood
+        torch.cuda.empty_cache()
+        return likelihood_cpu
 
     def get_latent_samps(self, samps, conditional):
         """

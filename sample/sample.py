@@ -155,7 +155,7 @@ class Sampler(object):
         if verbose:
             print("Sampling...")
         #initialise emcee sampler with self.posterior as probability function
-        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args)
+        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args, vectorize=True)
         
         #run sampling
         for idx, result in enumerate(sampler.sample(p0, iterations=self.nsteps)):
@@ -194,21 +194,22 @@ def lnp(x, submodels_dict, _concentration, hyperparam_bounds, \
     Dirichlet prior on betas given by _concentraion, conditional on the sum of the betas being one.
     """
     # first get prior on the hyperparameters, flat between the hyperparameter boundaries
+    lnprior = np.zeros(x.shape[0])
+
     for hyper_idx in list(submodels_dict.keys()):
-        hyperparam = x[hyper_idx]
-        if ((hyperparam < hyperparam_bounds[hyper_idx][0]) | (hyperparam > hyperparam_bounds[hyper_idx][1])):
-            return -np.inf
+        hyperparam = x[:,hyper_idx]
+        lnprior[(hyperparam < hyperparam_bounds[hyper_idx][0]) | (hyperparam > hyperparam_bounds[hyper_idx][1])] = -np.inf
 
     # second, get the prior on the betas as a Dirichlet prior
-    betas_tmp = np.asarray(x[len(submodels_dict):])
-    betas_tmp = np.append(betas_tmp, 1-np.sum(betas_tmp)) #synthesize last beta
-    if np.any(betas_tmp < 0.0):
-        return -np.inf
-    if np.sum(betas_tmp) != 1.0:
-        return -np.inf
+    betas_tmp = np.asarray(x[:,len(submodels_dict):])
+    betas_tmp = np.append(betas_tmp, 1-np.sum(betas_tmp, axis=1)[:,np.newaxis], axis=1) #synthesize last beta
+    lnprior[np.any(betas_tmp <0.,axis=1)] = -np.inf
+    lnprior[np.sum(betas_tmp, axis=1)!=1.] = -np.inf
 
-    # Dirchlet distribution prior for betas, plus uniform prior on log(alphaCE) values
-    return dirichlet.logpdf(betas_tmp, _concentration)
+    # Dirchlet distribution prior for betas
+    lnprior[lnprior>-np.inf]=dirichlet.logpdf(betas_tmp[lnprior>-np.inf].T, np.ones((betas_tmp.shape[1])))
+
+    return lnprior
 
 
 def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
@@ -242,26 +243,25 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
     Returns
         log likelihood summed over events, accounting for detection efficiency
     """
-
     # get betas
-    betas = np.asarray(x[len(submodels_dict):])
-    betas = np.append(betas, 1-np.sum(betas))
+    betas = np.asarray(x[:,len(submodels_dict):])
+    betas = np.append(betas, 1-np.sum(betas, axis=1)[:,np.newaxis], axis=1).T
 
-    # allocate likelihood 
-    lnprob = np.zeros(data.shape[0])-np.inf
+    # allocate likelihood in shape Nevents x Nwalkers
+    lnprob = np.zeros((data.shape[0], x.shape[0]))-np.inf
 
-    # initialize detection effiency for this hypermodel
-    alpha = 0
+    # initialize detection effiency for this hypermodel of shape Nwalkers
+    alpha = np.zeros(x.shape[0])
 
     if continuous_sampling:
-        model_hyperparams = x[:len(submodels_dict)]
+        model_hyperparams = x[:,:len(submodels_dict)]
     else:
         model_list = []
         #find hyperparameter index of walker
         hyperparam_idxs = []
         for hyper_idx in list(submodels_dict.keys()):
-            hyperparam_idxs.append(int(np.floor(x[hyper_idx])))
-            model_list.append(submodels_dict[hyper_idx][int(np.floor(x[hyper_idx]))])
+            hyperparam_idxs.append(int(np.floor(x[:,hyper_idx])))
+            model_list.append(submodels_dict[hyper_idx][int(np.floor(x[:,hyper_idx]))])
 
     # Iterate over channels in this submodel, return likelihood of population model
     for channel, beta in zip(channels, betas):
@@ -270,8 +270,8 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
             # continuous hyperparameter sampling with normalizing flows
             smdl = models[channel]  # get corresponding flow to channel
             #sum likelihood over channels, keep track of detection efficiency
-            lnprob = logsumexp([lnprob, np.log(beta) + smdl(data, model_hyperparams[:smdl.conditionals], smallest_N, data_prior=prior_pdf)], axis=0)
-            alpha += beta * smdl.get_alpha(model_hyperparams[:smdl.conditionals])
+            lnprob = logsumexp([lnprob, np.log(beta) + smdl(data, model_hyperparams[:,:smdl.conditionals], smallest_N, data_prior=prior_pdf)], axis=0)
+            alpha += beta * smdl.get_alpha(model_hyperparams[:,:smdl.conditionals])
 
         elif use_flows==True:
             # discrete hyperparameter sampling with normalizing flows
@@ -286,7 +286,6 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
             else:
                 model_hyperparam_idxs = hyperparam_idxs[0]
             alpha += beta * smdl.alpha[model_hyperparam_idxs]
-
         else:
             model_list_tmp = model_list.copy()
             model_list_tmp.insert(0,channel) #list with channel and hypermodels
@@ -295,7 +294,7 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
             alpha += beta * smdl.alpha
 
     #returns lnprob summed over events (probability multiplied over events - see one channel eq D13 for full likelihood calc)
-    return (lnprob-np.log(alpha)).sum()
+    return (lnprob-np.log(alpha)).sum(axis=0)
 
 
 def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_bounds, \
@@ -335,16 +334,14 @@ def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_boun
     # Prior
     log_prior = lnp(x, submodels_dict, _concentration, \
                     hyperparam_bounds, continuous_sampling)
-    if not np.isfinite(log_prior):
-        return log_prior
 
     # Likelihood
-    log_like = lnlike(x, data, models, submodels_dict, channels, \
+    log_like = np.zeros_like(log_prior) - np.inf
+    log_like[log_prior>-np.inf]  = lnlike(x[np.isfinite(log_prior)], data, models, submodels_dict, channels, \
                       prior_pdf, use_flows, continuous_sampling, smallest_N)
+    log_post = log_prior + log_like
     
-    return log_like + log_prior #evidence is divided out
-
-
+    return log_post #evidence is divided out
 
 
 _valid_samplers = {'emcee': EnsembleSampler}
