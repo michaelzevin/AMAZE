@@ -66,6 +66,7 @@ class Model(object):
                 raise ValueError(f"{sensitivity} was specified for your detection weights, but cannot find the column 'pdet_{sensitivity}' in the samples datafarme!")
 
             if multisensitivity:
+                #calculate average pdet to use for detection efficiency
                 latest_run = sensitivity.split('_')[0] #extract run from sensitivity key
                 obs_times = {'O1':{'start':1126051217, 'end':1137196817, 'det':['H1','L1']},\
                             'O2':{'start':1164499217, 'end':1187654418, 'det':['H1','L1','V1']},\
@@ -795,7 +796,7 @@ class FlowModel(Model):
             Posterior samples of observations or mock observations for which to calculate the likelihoods,
             shape[Nobs x Nsample x Nparams]
         conditional_hps : array
-            Values of hyperparameters for require submodel, of shape [Nwalkers,self.conditionals]
+            Values of hyperparameters for require submodel, of shape [self.conditionals]
         smallest_N : int
             The constant by which to add a regularisation factor, in order to give an approximately constant 
             probability of 1/smallest_N in the distribution tails 
@@ -810,17 +811,20 @@ class FlowModel(Model):
         """
 
         #initialise log likelihood as -infnity
-        likelihood = torch.ones(data.shape[0],conditional_hps.shape[0]) * -torch.inf
+        likelihood = torch.ones(data.shape[0]) * -torch.inf
         likelihood=likelihood.to(device)
 
         #maps observations into the logistically mapped space
         if self.data is None:
-            self.mapped_obs = self.map_obs(data)
-            self.data  = np.repeat(data[:,:,np.newaxis,:],np.shape(conditional_hps)[0], axis=2)
-            self.mapped_obs  = np.repeat(self.mapped_obs[:,:,np.newaxis,:],np.shape(conditional_hps)[0], axis=2)
+            self.mapped_obs = np.zeros_like(data)
+            #map PE samples apart from nan samples, then ensure mapped_samples is reshaped to data.shape
+            self.mapped_obs[~np.isnan(data)] = self.map_obs(data[~np.isnan(data)].reshape(-1,self.no_params)).flatten()
+            self.mapped_obs[np.isnan(data)] = np.nan
+            self.mapped_obs.reshape(data.shape)
+            self.data = data
+            self.no_obs_samps = [len(d[~np.isnan(d)]) for d in self.data[:,:,0]]
             #set equal prior for all samples if prior is not specified
             self.data_prior = torch.tensor(data_prior).to(device) if data_prior is not None else torch.ones((data.shape[0],data.shape[1])).to(device)
-            self.data_prior = self.data_prior.unsqueeze(-1).repeat_interleave(conditional_hps.shape[0], dim=-1)
             #raise error if any samples have prior=0
             if torch.any(self.data_prior == 0.):
                 raise Exception('One or more of the prior samples is equal to zero')
@@ -838,19 +842,21 @@ class FlowModel(Model):
             #sums the population probability plus uniform regularisation
             if self.pi_reg is None:
                 self.pi_reg = torch.tensor(np.log(1/(smallest_N+1)*np.ones(likelihoods_per_samp.shape)), dtype=torch.float32).to(device)
+                #add zero regularisation where likelihoods are inf due to smallet set of event samples
+                self.pi_reg[likelihoods_per_samp==-torch.inf] = -torch.inf
                 self.q_weight = torch.tensor(np.log(smallest_N/(smallest_N+1)), dtype=torch.float32).to(device)
             likelihoods_per_samp = torch.logsumexp(torch.stack([self.q_weight + likelihoods_per_samp, self.pi_reg]), axis=0)
 
-        #divide by the prior on the data samples
-        likelihoods_per_samp = likelihoods_per_samp - torch.log(self.data_prior)
+        #divide by the prior on the data samples, setting log prior=0 where there are no PE samples
+        log_prior=torch.log(self.data_prior).to(device)
+        log_prior[torch.isnan(log_prior)]=0
+        likelihoods_per_samp = likelihoods_per_samp - log_prior
 
         #adds likelihoods from samples together and then sums over events, normalise by number of samples
         #likelihood in shape [Nobs x Nwalkers]
-        likelihood = torch.logsumexp(torch.stack([likelihood, torch.logsumexp(likelihoods_per_samp, axis=1) - torch.tensor(self.data.shape[1]).log()]), axis=0)
+        likelihood = torch.logsumexp(torch.stack([likelihood, torch.logsumexp(likelihoods_per_samp, axis=1) - torch.tensor(self.no_obs_samps).to(device).log()]), axis=0)
         likelihood_cpu = likelihood.cpu().numpy()
 
-        del likelihood
-        torch.cuda.empty_cache()
         return likelihood_cpu
 
     def get_latent_samps(self, samps, conditional):
@@ -892,17 +898,17 @@ class FlowModel(Model):
             observational binary parameters logistically mapped
         Only accounts for full set of parameters in param_dict.
         """
-        mapped_data = np.zeros((np.shape(data)[0],np.shape(data)[1],np.shape(data)[2]))
+        mapped_data = np.zeros((np.shape(data)[0],np.shape(data)[1]))
 
         #compute logistic mappings of data
         for pidx, param in enumerate(self.param_dict):
             if self.param_dict[param]['transf'] == 'logit':
-                mapped_data[:,:,pidx],_,_ = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
+                mapped_data[:,pidx],_,_ = self.logistic(data[:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
             elif self.param_dict[param]['transf'] == 'tanh':
-                mapped_data[:,:,pidx] = np.arctanh(data[:,:,pidx])
+                mapped_data[:,pidx] = np.arctanh(data[:,pidx])
             else:
                 print(f'No transformation type specified for {param} dimension, attempting logistic transform')
-                mapped_data[:,:,pidx],_,_ = self.logistic(data[:,:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
+                mapped_data[:,pidx],_,_ = self.logistic(data[:,pidx], False, self.param_dict[param]['logit_max'], self.param_dict[param]['max'])
 
         return mapped_data
 
