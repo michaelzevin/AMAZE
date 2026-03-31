@@ -118,7 +118,7 @@ class Sampler(object):
                                       for p in pop_param_dict.keys()]
         self.hyperparam_bounds = hyperparam_bounds
 
-    def sample(self, models, obsdata, prior_pdf, smallest_N, verbose=True):
+    def sample(self, models, obsdata, prior_pdf, smallest_N, device, verbose=True):
         """
         Initialize and run the sampler
 
@@ -151,11 +151,11 @@ class Sampler(object):
         #set arguments to pass to self.posterior
         posterior_args = [obsdata, models, self.submodels_dict, self.channels, \
                 prior_pdf, self.hyperparam_bounds, self.use_flows, self.continuous_sampling, \
-                smallest_N, _concentration]
+                smallest_N, _concentration, device]
         if verbose:
             print("Sampling...")
         #initialise emcee sampler with self.posterior as probability function
-        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args)
+        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args, vectorize=False)
         
         #run sampling
         for idx, result in enumerate(sampler.sample(p0, iterations=self.nsteps)):
@@ -207,12 +207,12 @@ def lnp(x, submodels_dict, _concentration, hyperparam_bounds, \
     if np.sum(betas_tmp) != 1.0:
         return -np.inf
 
-    # Dirchlet distribution prior for betas, plus uniform prior on log(alphaCE) values
+    # Dirchlet distribution prior for betas
     return dirichlet.logpdf(betas_tmp, _concentration)
 
 
 def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
-           use_flows, continuous_sampling, smallest_N, **kwargs):
+           use_flows, continuous_sampling, smallest_N, device, **kwargs):
     """
     Log of the likelihood for model selection, using either KDEs or normalising flows. 
     Selects on model, then tests beta.
@@ -242,12 +242,11 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
     Returns
         log likelihood summed over events, accounting for detection efficiency
     """
-
     # get betas
     betas = np.asarray(x[len(submodels_dict):])
     betas = np.append(betas, 1-np.sum(betas))
 
-    # allocate likelihood 
+    # allocate likelihood in shape Nevents
     lnprob = np.zeros(data.shape[0])-np.inf
 
     # initialize detection effiency for this hypermodel
@@ -270,7 +269,7 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
             # continuous hyperparameter sampling with normalizing flows
             smdl = models[channel]  # get corresponding flow to channel
             #sum likelihood over channels, keep track of detection efficiency
-            lnprob = logsumexp([lnprob, np.log(beta) + smdl(data, model_hyperparams[:smdl.conditionals], smallest_N, data_prior=prior_pdf)], axis=0)
+            lnprob = logsumexp([lnprob, np.log(beta) + smdl(data, model_hyperparams[:smdl.conditionals], smallest_N, data_prior=prior_pdf, device=device)], axis=0)
             alpha += beta * smdl.get_alpha(model_hyperparams[:smdl.conditionals])
 
         elif use_flows==True:
@@ -286,7 +285,6 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
             else:
                 model_hyperparam_idxs = hyperparam_idxs[0]
             alpha += beta * smdl.alpha[model_hyperparam_idxs]
-
         else:
             model_list_tmp = model_list.copy()
             model_list_tmp.insert(0,channel) #list with channel and hypermodels
@@ -299,7 +297,7 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
 
 
 def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_bounds, \
-           use_flows, continuous_sampling, smallest_N, _concentration):
+           use_flows, continuous_sampling, smallest_N, _concentration, device):
     """
     Combines the prior and likelihood to give a log posterior probability 
     at a given point
@@ -340,11 +338,11 @@ def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_boun
 
     # Likelihood
     log_like = lnlike(x, data, models, submodels_dict, channels, \
-                      prior_pdf, use_flows, continuous_sampling, smallest_N)
+                      prior_pdf, use_flows, continuous_sampling, smallest_N, device)
+
+    log_post = log_prior + log_like
     
-    return log_like + log_prior #evidence is divided out
-
-
+    return log_post #evidence is divided out
 
 
 _valid_samplers = {'emcee': EnsembleSampler}

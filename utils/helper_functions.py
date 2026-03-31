@@ -63,6 +63,7 @@ def ParseIniFile(file_path):
     MainSettings = config_dict.get('MainSettings')
     RealObservations = config_dict.get('RealObservations')
     MockObservations = config_dict.get('MockObservations')
+    Sensitivity = config_dict.get('Sensitivity')
     Flows = config_dict.get('Flows')
     Sampler = config_dict.get('Sampler')
     ExtraOptions = config_dict.get('ExtraOptions')
@@ -70,7 +71,7 @@ def ParseIniFile(file_path):
     # save all options in arguments dictionary
     settings = {}
     for section in [MainSettings,RealObservations,MockObservations,\
-                        Flows,Sampler,ExtraOptions]:
+                        Sensitivity,Flows,Sampler,ExtraOptions]:
         for key, value in section.items():
             settings[key] = value
 

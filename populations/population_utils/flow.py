@@ -61,6 +61,9 @@ class NFlow():
         self.total_smdls = total_smdls
         self.cond_inputs = cond_inputs
 
+        self.device_sample = None
+        self.device_mapped_sample = None
+
         self.device = device # cuda:X where X is the slot of the GPU. run nvidia-smi in the terminal to see gpus
 
         if RNVP:
@@ -344,7 +347,19 @@ class NFlow():
             
         return torch.sum(torch.log(torch.abs(jac)), dim=1)
 
-    def get_logprob(self, sample, mapped_sample, param_dict, conditionals):
+    def store_obs_data(self, sample, mapped_sample):
+        """stores obsdata and mapped data as class attributes for faster evaluation"""
+        self.device_sample = torch.from_numpy(sample.astype(np.float32)).to(self.device)
+        self.device_mapped_sample = torch.from_numpy(mapped_sample.astype(np.float32)).to(self.device)
+        self.shape = mapped_sample.shape
+
+        #flatten samples given they are have dimensions Nsamples x Nobs x Nparams
+        self.device_sample = torch.flatten(self.device_sample, start_dim=0, end_dim=1)
+        self.device_mapped_sample = torch.flatten(self.device_mapped_sample, start_dim=0, end_dim=1)
+        self.device_sample = self.device_sample.reshape(-1,self.no_params)
+        self.device_mapped_sample = self.device_mapped_sample.reshape(-1,self.no_params)
+
+    def get_logprob(self, sample, mapped_sample, param_dict, conditionals, test_mode=False):
         """
         get log_prob p(theta|Lambda) given a sample of gw observables theta given conditional hyperparameters Lambda
 
@@ -359,6 +374,8 @@ class NFlow():
         conditionals : array
             values of population hyperparameters
             [Nobs x Nsamples x Nconditionals] shapped array
+        test_mode : bool
+            If True uses sample and mapped_sample provided, rather than preiously stored self.device_sample and self.device_mapped_sample
 
         Returns
         ----------
@@ -366,35 +383,30 @@ class NFlow():
             the log probability of each sample
             [Nobs x Nsamples] shaped array
         """
-
+        #save samples as class method to prevent recasting to torch every call, unless test_mode=True
         #make sure samples in right format
         #sample is now float64 to prevent rounding infs in jacobian
-        sample = torch.from_numpy(sample.astype(np.float64)).to(self.device)
-        mapped_sample = torch.from_numpy(mapped_sample.astype(np.float32)).to(self.device)
+        if test_mode==False and self.device_sample is None:
+            self.store_obs_data(sample, mapped_sample)
+        elif test_mode==True:
+            self.store_obs_data(sample, mapped_sample)
+
         hyperparams = torch.from_numpy(conditionals.astype(np.float32)).to(self.device)
-        #store shape
-        shape = mapped_sample.shape
-
-        #flatten samples given they are have dimensions Nsamples x Nobs x Nparams
-        sample = torch.flatten(sample, start_dim=0, end_dim=1)
-        mapped_sample = torch.flatten(mapped_sample, start_dim=0, end_dim=1)
-        hyperparams = torch.flatten(hyperparams, start_dim=0, end_dim=1)
+        hyperparams = torch.flatten(hyperparams, start_dim=0, end_dim=1)[~torch.isnan(self.device_mapped_sample)[:,0]]
         hyperparams = hyperparams.reshape(-1,self.cond_inputs)
-        sample = sample.reshape(-1,self.no_params)
-        mapped_sample = mapped_sample.reshape(-1,self.no_params)
 
+        log_prob = torch.zeros((self.shape[0]*self.shape[1])) - torch.inf
+        log_prob = log_prob.to(self.device)
         with torch.no_grad():
-            log_prob = self.network.log_prob(mapped_sample, hyperparams)
-            log_prob += self.log_jacobian(sample, param_dict)
+            log_prob[~torch.isnan(self.device_mapped_sample)[:,0]] = self.network.log_prob(self.device_mapped_sample[~torch.isnan(self.device_mapped_sample)].reshape(-1,4), hyperparams)
+            log_prob[~torch.isnan(self.device_mapped_sample)[:,0]] += self.log_jacobian(self.device_sample[~torch.isnan(self.device_sample)].reshape(-1,4), param_dict)
 
             #reshape
-            log_prob = torch.reshape(log_prob, [shape[0],shape[1]])
+            log_prob = torch.reshape(log_prob, [self.shape[0],self.shape[1]])
 
-            log_prob = log_prob.cpu().numpy() 
-            if np.any(np.isnan(log_prob)):
+            if torch.any(torch.isnan(log_prob)):
                 sys.exit('Unexpected nans in log prob evaluation, quitting code.')
-                log_prob[np.isnan(log_prob)] = -np.inf
-
+            #log_prob = log_prob.cpu().numpy() 
         return log_prob
 
     def get_latent_samps(self, samps, conditionals):

@@ -55,7 +55,7 @@ _parameter_transforms = {'mchirp': _gwtc_to_mchirp, 'q': _gwtc_to_q, \
                    'chieff': _gwtc_to_chieff, 'z': _gwtc_to_redshift}
 
 
-def read_observations(params, Nsamps, obs_path, events_to_exclude=None, prior_key=None):
+def read_observations(params, Nsamps, obs_path, events_to_exclude=None, prior_key=None, repeat_samples=False):
 
     event_files = []
     event_names = []
@@ -105,17 +105,25 @@ def read_observations(params, Nsamps, obs_path, events_to_exclude=None, prior_ke
         # randomly choose posterior samples to draw, with special treatment for cases,
         #   where there are less samples than specified number of observations
         if len(df) < Nsamps:
-            Ndraws = 0
-            sample_idxs = np.zeros(Nsamps, dtype=int)
-            while Ndraws*len(df) < Nsamps-len(df):
-                sample_idxs[Ndraws*len(df):(Ndraws+1)*len(df)] = np.arange(len(df))
-                Ndraws+=1
-            sample_idxs[Ndraws*len(df):Nsamps] = np.random.choice(np.arange(len(df)), size=Nsamps-(Ndraws*len(df)), replace=False)
+            if repeat_samples:
+                Ndraws = 0
+                sample_idxs = np.zeros(Nsamps, dtype=int)
+                while Ndraws*len(df) < Nsamps-len(df):
+                    sample_idxs[Ndraws*len(df):(Ndraws+1)*len(df)] = np.arange(len(df))
+                    Ndraws+=1
+                sample_idxs[Ndraws*len(df):Nsamps] = np.random.choice(np.arange(len(df)), size=Nsamps-(Ndraws*len(df)), replace=False)
+                samples[idx, :, :] = df[params].iloc[sample_idxs]
+                p_theta[idx, :] = df[prior_key].iloc[sample_idxs]
+            else:
+                samples[idx, :len(df), :] = df[params]
+                samples[idx, len(df):, :] = np.nan
+                if prior_key is not None:
+                    p_theta[idx, :len(df)] = df[prior_key]
+                    p_theta[idx, len(df):] = -np.inf
         else:
             sample_idxs = np.random.choice(np.arange(len(df)), size=Nsamps, replace=False)
-        samples[idx, :, :] = df[params].iloc[sample_idxs]
-
-        if prior_key is not None:
-            p_theta[idx, :] = df[prior_key].iloc[sample_idxs]
+            samples[idx, :, :] = df[params].iloc[sample_idxs]
+            if prior_key is not None:
+                p_theta[idx, :] = df[prior_key].iloc[sample_idxs]
 
     return obs, samples, p_theta, event_names
