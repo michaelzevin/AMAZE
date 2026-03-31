@@ -825,6 +825,7 @@ class FlowModel(Model):
             self.no_obs_samps = [len(d[~np.isnan(d)]) for d in self.data[:,:,0]]
             #set equal prior for all samples if prior is not specified
             self.data_prior = torch.tensor(data_prior).to(device) if data_prior is not None else torch.ones((data.shape[0],data.shape[1])).to(device)
+            self.log_prior=torch.log(self.data_prior).to(device)
             #raise error if any samples have prior=0
             if torch.any(self.data_prior == 0.):
                 raise Exception('One or more of the prior samples is equal to zero')
@@ -848,9 +849,8 @@ class FlowModel(Model):
             likelihoods_per_samp = torch.logsumexp(torch.stack([self.q_weight + likelihoods_per_samp, self.pi_reg]), axis=0)
 
         #divide by the prior on the data samples, setting log prior=0 where there are no PE samples
-        log_prior=torch.log(self.data_prior).to(device)
-        log_prior[torch.isnan(log_prior)]=0
-        likelihoods_per_samp = likelihoods_per_samp - log_prior
+        self.log_prior[torch.isnan(self.log_prior)]=0
+        likelihoods_per_samp = likelihoods_per_samp - self.log_prior
 
         #adds likelihoods from samples together and then sums over events, normalise by number of samples
         #likelihood in shape [Nobs x Nwalkers]

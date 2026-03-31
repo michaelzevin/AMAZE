@@ -118,7 +118,7 @@ class Sampler(object):
                                       for p in pop_param_dict.keys()]
         self.hyperparam_bounds = hyperparam_bounds
 
-    def sample(self, models, obsdata, prior_pdf, smallest_N, verbose=True):
+    def sample(self, models, obsdata, prior_pdf, smallest_N, device, verbose=True):
         """
         Initialize and run the sampler
 
@@ -151,7 +151,7 @@ class Sampler(object):
         #set arguments to pass to self.posterior
         posterior_args = [obsdata, models, self.submodels_dict, self.channels, \
                 prior_pdf, self.hyperparam_bounds, self.use_flows, self.continuous_sampling, \
-                smallest_N, _concentration]
+                smallest_N, _concentration, device]
         if verbose:
             print("Sampling...")
         #initialise emcee sampler with self.posterior as probability function
@@ -212,7 +212,7 @@ def lnp(x, submodels_dict, _concentration, hyperparam_bounds, \
 
 
 def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
-           use_flows, continuous_sampling, smallest_N, **kwargs):
+           use_flows, continuous_sampling, smallest_N, device, **kwargs):
     """
     Log of the likelihood for model selection, using either KDEs or normalising flows. 
     Selects on model, then tests beta.
@@ -246,10 +246,10 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
     betas = np.asarray(x[len(submodels_dict):])
     betas = np.append(betas, 1-np.sum(betas))
 
-    # allocate likelihood in shape Nevents x Nwalkers
-    lnprob = np.zeros((data.shape[0]))-np.inf
+    # allocate likelihood in shape Nevents
+    lnprob = np.zeros(data.shape[0])-np.inf
 
-    # initialize detection effiency for this hypermodel of shape Nwalkers
+    # initialize detection effiency for this hypermodel
     alpha = 0
 
     if continuous_sampling:
@@ -269,7 +269,7 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
             # continuous hyperparameter sampling with normalizing flows
             smdl = models[channel]  # get corresponding flow to channel
             #sum likelihood over channels, keep track of detection efficiency
-            lnprob = logsumexp([lnprob, np.log(beta) + smdl(data, model_hyperparams[:smdl.conditionals], smallest_N, data_prior=prior_pdf, device='cuda:0')], axis=0)
+            lnprob = logsumexp([lnprob, np.log(beta) + smdl(data, model_hyperparams[:smdl.conditionals], smallest_N, data_prior=prior_pdf, device=device)], axis=0)
             alpha += beta * smdl.get_alpha(model_hyperparams[:smdl.conditionals])
 
         elif use_flows==True:
@@ -297,7 +297,7 @@ def lnlike(x, data, models, submodels_dict, channels, prior_pdf, \
 
 
 def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_bounds, \
-           use_flows, continuous_sampling, smallest_N, _concentration):
+           use_flows, continuous_sampling, smallest_N, _concentration, device):
     """
     Combines the prior and likelihood to give a log posterior probability 
     at a given point
@@ -338,7 +338,7 @@ def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_boun
 
     # Likelihood
     log_like = lnlike(x, data, models, submodels_dict, channels, \
-                      prior_pdf, use_flows, continuous_sampling, smallest_N)
+                      prior_pdf, use_flows, continuous_sampling, smallest_N, device)
 
     log_post = log_prior + log_like
     

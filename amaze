@@ -262,7 +262,6 @@ def amaze(ini_file):
                 plot_obs_samples=False, \
                 verbose=verbose)
 
-
     # --- Do the sampling!
     # Initialize sampler class
     sampler = sample.Sampler(model_names=model_names, \
@@ -277,6 +276,7 @@ def amaze(ini_file):
                     obsdata = obs_samples, \
                     prior_pdf = p_theta, \
                     smallest_N = settings['n-regularization'], \
+                    device= settings['device'], \
                     verbose=verbose)
 
     samples = sampler.samples
