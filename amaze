@@ -16,7 +16,6 @@ import sys
 import os
 import warnings
 import multiprocessing
-import pdb
 
 import numpy as np
 import pandas as pd
@@ -26,8 +25,8 @@ from sample import sample
 from plot import msplot
 import utils.helper_functions as helper_functions
 
-
-def amaze(ini_file):
+def amaze(args):
+    ini_file = args[0]
     # --- Read in the parsed ini file
     settings = helper_functions.ParseIniFile(ini_file)
 
@@ -37,10 +36,13 @@ def amaze(ini_file):
     # --- Create directory for plots and output samples
     os.makedirs(settings['output-dir'], exist_ok=True)
 
-    # --- Set random seed
+    # --- Set random seed either from settings or from arg to amaze script
     if settings['random-seed']:
         np.random.seed(settings['random-seed'])
         random_seed = settings['random-seed']
+    elif len(args) > 1:
+        np.random.seed(int(args[1]))
+        random_seed = args[1]
     else:
         random_seed = None
 
@@ -50,6 +52,7 @@ def amaze(ini_file):
     # --- Load in population models into dictionary structure: models[channel] 
     #     for flows and models[channel][model] for KDEs
     if verbose:
+        print(f"\nSet random seed to {random_seed}\n")
         print("\nReading models, applying transformations, and initializing density estimates for astrophysical populations...\n")
 
     # for specific case of mock observations with SNR-based uncertainties, need to read optimal SNRs
@@ -366,6 +369,7 @@ def amaze(ini_file):
 
     helper_functions.SaveToDisk(\
                     settings=settings, \
+                    random_seed=random_seed, \
                     model0=model0, \
                     submodels_dict=submodels_dict, \
                     obsdata=obs_samples, \
@@ -379,4 +383,5 @@ def amaze(ini_file):
 
 # Run main AMAZE function
 if __name__ == "__main__":
-    amaze(sys.argv[1])
+    args = [arg for arg in sys.argv[1:]]
+    amaze(args)
