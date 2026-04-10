@@ -347,8 +347,13 @@ class NFlow():
             
         return torch.sum(torch.log(torch.abs(jac)), dim=1)
 
-    def store_obs_data(self, sample, mapped_sample):
+    def store_obs_data(self, sample, mapped_sample, param_dict):
         """stores obsdata and mapped data as class attributes for faster evaluation"""
+
+        #save jacobian calculated from float64 to avoiding infs from rounding
+        sample_64 = torch.from_numpy(sample.astype(np.float64)).to(self.device)
+        self.device_jcb = self.log_jacobian(sample_64[~torch.isnan(sample_64)].reshape(-1,4), param_dict)
+
         self.device_sample = torch.from_numpy(sample.astype(np.float32)).to(self.device)
         self.device_mapped_sample = torch.from_numpy(mapped_sample.astype(np.float32)).to(self.device)
         self.shape = mapped_sample.shape
@@ -387,9 +392,9 @@ class NFlow():
         #make sure samples in right format
         #sample is now float64 to prevent rounding infs in jacobian
         if test_mode==False and self.device_sample is None:
-            self.store_obs_data(sample, mapped_sample)
+            self.store_obs_data(sample, mapped_sample, param_dict)
         elif test_mode==True:
-            self.store_obs_data(sample, mapped_sample)
+            self.store_obs_data(sample, mapped_sample, param_dict)
 
         hyperparams = torch.from_numpy(conditionals.astype(np.float32)).to(self.device)
         hyperparams = torch.flatten(hyperparams, start_dim=0, end_dim=1)[~torch.isnan(self.device_mapped_sample)[:,0]]
@@ -399,7 +404,7 @@ class NFlow():
         log_prob = log_prob.to(self.device)
         with torch.no_grad():
             log_prob[~torch.isnan(self.device_mapped_sample)[:,0]] = self.network.log_prob(self.device_mapped_sample[~torch.isnan(self.device_mapped_sample)].reshape(-1,4), hyperparams)
-            log_prob[~torch.isnan(self.device_mapped_sample)[:,0]] += self.log_jacobian(self.device_sample[~torch.isnan(self.device_sample)].reshape(-1,4), param_dict)
+            log_prob[~torch.isnan(self.device_mapped_sample)[:,0]] += self.device_jcb
 
             #reshape
             log_prob = torch.reshape(log_prob, [self.shape[0],self.shape[1]])

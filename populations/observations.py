@@ -57,6 +57,7 @@ _parameter_transforms = {'mchirp': _gwtc_to_mchirp, 'q': _gwtc_to_q, \
 
 def read_observations(params, Nsamps, obs_path, events_to_exclude=None, prior_key=None, repeat_samples=False):
 
+    events_to_exclude = np.asarray(events_to_exclude)
     event_files = []
     event_names = []
     for f in os.listdir(obs_path):

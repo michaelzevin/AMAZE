@@ -280,6 +280,8 @@ def amaze(args):
                     prior_pdf = p_theta, \
                     smallest_N = settings['n-regularization'], \
                     device= settings['device'], \
+                    outdir= os.path.join(os.getcwd(), settings['output-dir']), \
+                    random_seed=random_seed, \
                     verbose=verbose)
 
     samples = sampler.samples

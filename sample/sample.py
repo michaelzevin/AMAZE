@@ -4,6 +4,7 @@ import scipy as sp
 from scipy.stats import dirichlet
 from scipy.stats import loguniform
 import pandas as pd
+import os
 
 from functools import reduce
 import operator
@@ -11,6 +12,7 @@ import pdb
 from scipy.special import logsumexp
 
 from emcee import EnsembleSampler
+from emcee import backends
 
 
 # default sampler settings 
@@ -118,7 +120,7 @@ class Sampler(object):
                                       for p in pop_param_dict.keys()]
         self.hyperparam_bounds = hyperparam_bounds
 
-    def sample(self, models, obsdata, prior_pdf, smallest_N, device, verbose=True):
+    def sample(self, models, obsdata, prior_pdf, smallest_N, device, outdir, random_seed, verbose=True):
         """
         Initialize and run the sampler
 
@@ -152,10 +154,21 @@ class Sampler(object):
         posterior_args = [obsdata, models, self.submodels_dict, self.channels, \
                 prior_pdf, self.hyperparam_bounds, self.use_flows, self.continuous_sampling, \
                 smallest_N, _concentration, device]
+
+        #load previous steps from backend if it exists
+        if os.path.exists(f'{outdir}/emcee_backend_seed{random_seed}.hdf5'):
+            backend = backends.HDFBackend(f'{outdir}/emcee_backend_seed{random_seed}.hdf5')
+            self.nsteps = self.nsteps - backend.iteration
+            if verbose:
+                print(f'Loading previous samples, {backend.iteration} iterations completed.')
+        else:
+            backend = backends.HDFBackend(f'{outdir}/emcee_backend_seed{random_seed}.hdf5')
+            backend.reset(self.nwalkers, self.ndim)
+
         if verbose:
             print("Sampling...")
         #initialise emcee sampler with self.posterior as probability function
-        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args, vectorize=False)
+        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args, backend=None, vectorize=False)
         
         #run sampling
         for idx, result in enumerate(sampler.sample(p0, iterations=self.nsteps)):
@@ -339,7 +352,7 @@ def lnpost(x, data, models, submodels_dict, channels, prior_pdf, hyperparam_boun
     # Likelihood
     log_like = lnlike(x, data, models, submodels_dict, channels, \
                       prior_pdf, use_flows, continuous_sampling, smallest_N, device)
-
+                      
     log_post = log_prior + log_like
     
     return log_post #evidence is divided out
