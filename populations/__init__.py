@@ -73,6 +73,7 @@ class Model(object):
                             'O3a':{'start':1238112018, 'end':1253923218, 'det':['H1','L1','V1']},\
                             'O3b':{'start':1256601618, 'end':1269302418, 'det':['H1','L1','V1']},\
                             'O4a':{'start':1368975618, 'end':1389456018, 'det':['H1','L1']},\
+                            'O4b':{'start':1396796418, 'end':1422118818, 'det':['H1','L1','V1']},\
                             }
                 if latest_run not in obs_times:
                     raise ValueError(f"{sensitivity} was specified for your detection weights, but the sensitivity must start with one of {list(obs_times.keys())} if multisensitivity is specified")

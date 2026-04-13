@@ -168,7 +168,7 @@ class Sampler(object):
         if verbose:
             print("Sampling...")
         #initialise emcee sampler with self.posterior as probability function
-        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args, backend=None, vectorize=False)
+        sampler = self.sampler(self.nwalkers, self.ndim, self.posterior, args=posterior_args, backend=backend, vectorize=False)
         
         #run sampling
         for idx, result in enumerate(sampler.sample(p0, iterations=self.nsteps)):
