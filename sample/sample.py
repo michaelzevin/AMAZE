@@ -158,7 +158,8 @@ class Sampler(object):
         #load previous steps from backend if it exists
         if os.path.exists(f'{outdir}/emcee_backend_seed{random_seed}.hdf5'):
             backend = backends.HDFBackend(f'{outdir}/emcee_backend_seed{random_seed}.hdf5')
-            self.nsteps = self.nsteps - backend.iteration
+            self.nsteps = self.nsteps - backend.iteration - 1
+            p0=backend.get_last_sample()
             if verbose:
                 print(f'Loading previous samples, {backend.iteration} iterations completed.')
         else:
