@@ -348,15 +348,15 @@ def PrintSummaryStatistics(samples, samples_det, model_names, \
             print("    detectable betas={}".format(list(sample_betas_detectable.items())))
     print("")
 
-def SaveToDisk(settings, model0, submodels_dict, obsdata, \
+def SaveToDisk(settings, random_seed, model0, submodels_dict, obsdata, \
                samples, probs, events=None, detectable_samples=None):
     """
     Saves all relevant information to disk as hdf5 file
     """
     if settings['output-dir'] is not None:
-        fpath = os.path.join(os.getcwd(), settings['output-dir'], 'amaze_output.hdf5')
+        fpath = os.path.join(os.getcwd(), settings['output-dir'], f'amaze_output_seed{random_seed}.hdf5')
     else:
-        fpath = os.path.join(os.getcwd(), 'amaze_output.hdf5')
+        fpath = os.path.join(os.getcwd(), f'amaze_output_seed{random_seed}.hdf5')
 
     if settings['verbose']:
         print("  writing to disk at {:s}...".format(fpath))
